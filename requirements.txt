@@ -1,0 +1,5 @@
+playwright==1.44.0
+httpx==0.27.0
+python-telegram-bot==21.3
+schedule==1.2.2
+python-dotenv==1.0.1
