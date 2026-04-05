@@ -1,0 +1,61 @@
+{
+  "name": "solana-arb-bot",
+  "version": "1.0.0",
+  "description": "Solana DEX Arbitrage Bot — monitors Jupiter, Orca, Raydium for spreads and executes profitable trades.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "dev": "ts-node src/main.ts",
+    "test": "jest --passWithNoTests",
+    "test:watch": "jest --watch"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/tests"
+    ],
+    "testMatch": [
+      "**/*.test.ts"
+    ],
+    "moduleFileExtensions": [
+      "ts",
+      "js",
+      "json"
+    ],
+    "globals": {
+      "ts-jest": {
+        "tsconfig": "tsconfig.test.json"
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:38231/git/steuf11/main"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.5.2",
+    "@types/node-cron": "^3.0.11",
+    "@types/uuid": "^10.0.0",
+    "jest": "^30.3.0",
+    "ts-jest": "^29.4.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "axios": "^1.14.0",
+    "better-sqlite3": "^12.8.0",
+    "bs58": "^6.0.0",
+    "dotenv": "^17.4.0",
+    "node-cron": "^4.2.1",
+    "uuid": "^13.0.0"
+  }
+}
