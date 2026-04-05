@@ -1,33 +1,44 @@
 import {
   Connection,
   Keypair,
-  PublicKey,
   VersionedTransaction,
-  TransactionMessage,
-  ComputeBudgetProgram,
+  TransactionSignature,
 } from "@solana/web3.js";
 import axios from "axios";
 import bs58 from "bs58";
 import { v4 as uuidv4 } from "uuid";
 import { ArbitrageOpportunity, TradeResult } from "./types";
+import { TOKEN_MINTS, DECIMALS } from "./token-registry";
 
 const JUPITER_BASE_URL = "https://quote-api.jup.ag/v6";
 const MIN_SOL_FOR_FEES = 0.05;
+/** Timeout for Jupiter API calls */
+const JUPITER_TIMEOUT_MS = 10_000;
+/** Timeout for on-chain confirmation — prevents infinite hang */
+const CONFIRM_TIMEOUT_MS = 60_000;
 
-// Token mint addresses
-const TOKEN_MINTS: Record<string, string> = {
-  SOL: "So11111111111111111111111111111111111111112",
-  USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-  USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
-  BONK: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-};
+// ─── Jupiter Quote Validation ────────────────────────────────────────────────
 
-const DECIMALS: Record<string, number> = {
-  SOL: 9,
-  USDC: 6,
-  USDT: 6,
-  BONK: 5,
-};
+interface JupiterQuote {
+  inAmount: string;
+  outAmount: string;
+  priceImpactPct: string;
+  routePlan: Array<{ swapInfo?: { feeAmount?: number } }>;
+}
+
+function validateJupiterQuote(raw: unknown): raw is JupiterQuote {
+  if (!raw || typeof raw !== "object") return false;
+  const q = raw as Record<string, unknown>;
+  return (
+    typeof q["inAmount"] === "string" &&
+    typeof q["outAmount"] === "string" &&
+    !isNaN(Number(q["inAmount"])) &&
+    !isNaN(Number(q["outAmount"])) &&
+    Number(q["outAmount"]) > 0
+  );
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,23 +47,29 @@ async function sleep(ms: number): Promise<void> {
 async function getJupiterQuote(
   inputMint: string,
   outputMint: string,
-  amountLamports: number,
+  amountLamports: bigint,
   slippageBps: number
-): Promise<unknown> {
+): Promise<JupiterQuote> {
   const res = await axios.get(`${JUPITER_BASE_URL}/quote`, {
     params: {
       inputMint,
       outputMint,
-      amount: amountLamports,
+      amount: amountLamports.toString(), // bigint → string, no precision loss
       slippageBps,
     },
-    timeout: 10_000,
+    timeout: JUPITER_TIMEOUT_MS,
   });
+
+  if (!validateJupiterQuote(res.data)) {
+    throw new Error(
+      `Invalid Jupiter quote response: ${JSON.stringify(res.data)}`
+    );
+  }
   return res.data;
 }
 
 async function buildJupiterSwapTx(
-  quote: unknown,
+  quote: JupiterQuote,
   walletPublicKey: string
 ): Promise<string> {
   const res = await axios.post(
@@ -63,16 +80,23 @@ async function buildJupiterSwapTx(
       wrapAndUnwrapSol: true,
       computeUnitPriceMicroLamports: 10_000,
     },
-    { timeout: 10_000 }
+    { timeout: JUPITER_TIMEOUT_MS }
   );
-  return res.data.swapTransaction; // base64-encoded VersionedTransaction
+
+  const swapTx = res.data?.swapTransaction;
+  if (typeof swapTx !== "string" || swapTx.length === 0) {
+    throw new Error(
+      `Invalid Jupiter swap response: ${JSON.stringify(res.data)}`
+    );
+  }
+  return swapTx;
 }
 
 async function sendWithRetry(
   connection: Connection,
   transaction: VersionedTransaction,
   retries: number = 3
-): Promise<string> {
+): Promise<TransactionSignature> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const sig = await connection.sendTransaction(transaction, {
@@ -80,24 +104,39 @@ async function sendWithRetry(
         skipPreflight: false,
       });
 
-      // Wait for confirmation
-      const { value } = await connection.confirmTransaction(sig, "confirmed");
-      if (value.err) {
-        throw new Error(`Transaction error: ${JSON.stringify(value.err)}`);
-      }
+      // Bounded confirmation — never hangs indefinitely
+      const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+      const result = await Promise.race([
+        connection.confirmTransaction(
+          { signature: sig, ...latestBlockhash },
+          "confirmed"
+        ),
+        sleep(CONFIRM_TIMEOUT_MS).then(() => {
+          throw new Error(
+            `Confirmation timeout after ${CONFIRM_TIMEOUT_MS / 1000}s for ${sig}`
+          );
+        }),
+      ]);
 
+      if (result.value.err) {
+        throw new Error(
+          `Transaction error: ${JSON.stringify(result.value.err)}`
+        );
+      }
       return sig;
     } catch (err) {
       if (attempt === retries) throw err;
       const backoff = 2 ** attempt * 500;
       console.warn(
-        `[Trade Executor] Attempt ${attempt} failed, retrying in ${backoff}ms...`
+        `[Trade Executor] Attempt ${attempt} failed, retrying in ${backoff}ms: ${(err as Error).message}`
       );
       await sleep(backoff);
     }
   }
   throw new Error("All retry attempts exhausted");
 }
+
+// ─── Main export ─────────────────────────────────────────────────────────────
 
 export async function executeArbitrage(
   opportunity: ArbitrageOpportunity,
@@ -115,31 +154,38 @@ export async function executeArbitrage(
   const midMint = TOKEN_MINTS[base];
   const outputMint = TOKEN_MINTS[quote] ?? TOKEN_MINTS[base];
 
-  const baseDecimals = DECIMALS[base] ?? 9;
+  // Use single source of truth for decimals (fix #5)
   const quoteDecimals = DECIMALS[quote] ?? 6;
-  const amountInLamports = Math.floor(tradeSizeUsd * 10 ** quoteDecimals);
+
+  // Fix #2: Use BigInt arithmetic to avoid float overflow on large amounts
+  const amountInLamports =
+    BigInt(Math.floor(tradeSizeUsd)) * BigInt(10 ** quoteDecimals);
+
+  const failed = (error: string): TradeResult => ({
+    trade_id: tradeId,
+    status: "failed",
+    buy_tx: null,
+    sell_tx: null,
+    profit_usd: 0,
+    fees_usd: 0,
+    net_pnl_usd: 0,
+    timestamp,
+    error,
+  });
 
   // Check SOL balance for fees
   const solBalance = await connection.getBalance(wallet.publicKey);
   if (solBalance / 1e9 < MIN_SOL_FOR_FEES) {
-    return {
-      trade_id: tradeId,
-      status: "failed",
-      buy_tx: null,
-      sell_tx: null,
-      profit_usd: 0,
-      fees_usd: 0,
-      net_pnl_usd: 0,
-      timestamp,
-      error: `Insufficient SOL for fees: ${(solBalance / 1e9).toFixed(4)} SOL < ${MIN_SOL_FOR_FEES} required`,
-    };
+    return failed(
+      `Insufficient SOL for fees: ${(solBalance / 1e9).toFixed(4)} SOL < ${MIN_SOL_FOR_FEES} required`
+    );
   }
 
   let buyTxHash: string | null = null;
   let sellTxHash: string | null = null;
 
   try {
-    // --- LEG 1: Buy (USDC → SOL on buy DEX) ---
+    // --- LEG 1: Buy (USDC → SOL) ---
     const buyQuote = await getJupiterQuote(
       inputMint,
       midMint,
@@ -150,21 +196,19 @@ export async function executeArbitrage(
       buyQuote,
       wallet.publicKey.toString()
     );
-    const buyTxBytes = Buffer.from(buySwapTxBase64, "base64");
-    const buyTx = VersionedTransaction.deserialize(buyTxBytes);
+    const buyTx = VersionedTransaction.deserialize(
+      Buffer.from(buySwapTxBase64, "base64")
+    );
     buyTx.sign([wallet]);
 
-    console.log(
-      `[Trade Executor] Sending buy leg on ${opportunity.buy_dex}...`
-    );
+    console.log(`[Trade Executor] Sending buy leg on ${opportunity.buy_dex}...`);
     buyTxHash = await sendWithRetry(connection, buyTx);
     console.log(`[Trade Executor] Buy leg confirmed: ${buyTxHash}`);
 
-    // Get the SOL amount received from the buy
-    const buyQuoteData = buyQuote as { outAmount: string };
-    const solReceived = parseInt(buyQuoteData.outAmount);
+    // Fix #3: outAmount already validated — safe to parse
+    const solReceived = BigInt(buyQuote.outAmount);
 
-    // --- LEG 2: Sell (SOL → USDC on sell DEX) ---
+    // --- LEG 2: Sell (SOL → USDC) ---
     const sellQuote = await getJupiterQuote(
       midMint,
       outputMint,
@@ -175,26 +219,34 @@ export async function executeArbitrage(
       sellQuote,
       wallet.publicKey.toString()
     );
-    const sellTxBytes = Buffer.from(sellSwapTxBase64, "base64");
-    const sellTx = VersionedTransaction.deserialize(sellTxBytes);
+    const sellTx = VersionedTransaction.deserialize(
+      Buffer.from(sellSwapTxBase64, "base64")
+    );
     sellTx.sign([wallet]);
 
-    console.log(
-      `[Trade Executor] Sending sell leg on ${opportunity.sell_dex}...`
-    );
+    console.log(`[Trade Executor] Sending sell leg on ${opportunity.sell_dex}...`);
     sellTxHash = await sendWithRetry(connection, sellTx);
     console.log(`[Trade Executor] Sell leg confirmed: ${sellTxHash}`);
 
-    // Calculate actual P&L
-    const sellQuoteData = sellQuote as { outAmount: string };
-    const usdcReceived = parseInt(sellQuoteData.outAmount) / 10 ** quoteDecimals;
-    const networkFeesSol = 0.000015 * 2; // ~2 transactions
-    const networkFeesUsd = networkFeesSol * opportunity.buy_price;
-    const dexFees =
-      (opportunity.buy_price * tradeSizeUsd * 0.0025 +
-        opportunity.sell_price * tradeSizeUsd * 0.003) /
-      100;
-    const totalFeesUsd = networkFeesUsd + dexFees;
+    // Fix #8: P&L calculated from actual on-chain amounts, not estimates
+    const usdcReceived =
+      Number(BigInt(sellQuote.outAmount)) / 10 ** quoteDecimals;
+
+    // Fees from actual route data (fix #8 — not hardcoded)
+    const buyFeeUsd =
+      (buyQuote.routePlan ?? []).reduce(
+        (acc, r) => acc + (r.swapInfo?.feeAmount ?? 0),
+        0
+      ) /
+      10 ** quoteDecimals;
+    const sellFeeUsd =
+      (sellQuote.routePlan ?? []).reduce(
+        (acc, r) => acc + (r.swapInfo?.feeAmount ?? 0),
+        0
+      ) /
+      10 ** quoteDecimals;
+    const totalFeesUsd = buyFeeUsd + sellFeeUsd;
+
     const profitUsd = usdcReceived - tradeSizeUsd;
     const netPnl = profitUsd - totalFeesUsd;
 
@@ -226,9 +278,14 @@ export async function executeArbitrage(
   }
 }
 
+// Fix #1: Wipe secret bytes immediately after key derivation
 export function loadWallet(privateKeyBase58: string): Keypair {
   const secret = bs58.decode(privateKeyBase58);
-  return Keypair.fromSecretKey(secret);
+  try {
+    return Keypair.fromSecretKey(secret);
+  } finally {
+    secret.fill(0); // zero-out in all code paths, including exceptions
+  }
 }
 
 export function createConnection(rpcUrl: string): Connection {

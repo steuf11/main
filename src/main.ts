@@ -1,4 +1,5 @@
 import * as cron from "node-cron";
+import pLimit from "p-limit";
 import { loadConfig } from "./config";
 import { fetchPrices } from "./dex-monitor";
 import { findArbitrageOpportunities } from "./spread-calculator";
@@ -21,46 +22,75 @@ import { Config } from "./types";
 
 const MONITORED_PAIRS = ["SOL/USDC"];
 
-let isExecutingTrade = false; // prevent concurrent trades
+// Fix #4: p-limit(1) guarantees only one concurrent execution — atomic, no race condition
+const executeLimit = pLimit(1);
+
+// Fix #10: Circuit breaker — halt trading after N consecutive losses
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+let consecutiveLosses = 0;
+let circuitOpen = false;
+
+function recordLoss(config: Config): void {
+  consecutiveLosses++;
+  if (consecutiveLosses >= CIRCUIT_BREAKER_THRESHOLD && !circuitOpen) {
+    circuitOpen = true;
+    console.error(
+      `[Main] Circuit breaker OPEN after ${consecutiveLosses} consecutive losses. Trading halted.`
+    );
+    alertError(
+      config.telegram_bot_token,
+      config.telegram_chat_id,
+      "Circuit breaker",
+      new Error(
+        `Trading halted after ${consecutiveLosses} consecutive losses. Restart bot to reset.`
+      )
+    ).catch(() => {});
+  }
+}
+
+function recordWin(): void {
+  consecutiveLosses = 0;
+}
 
 async function monitorCycle(config: Config): Promise<void> {
-  if (isExecutingTrade) {
-    console.log("[Main] Skipping cycle — trade already in progress.");
+  // Fix #10: skip if circuit open
+  if (circuitOpen) {
+    console.log("[Main] Circuit breaker open — trading halted. Restart to reset.");
     return;
   }
 
-  for (const pair of MONITORED_PAIRS) {
-    try {
-      console.log(`[Main] Fetching prices for ${pair}...`);
-      const priceData = await fetchPrices(pair, config.max_trade_size_usd);
-
-      if (Object.keys(priceData.prices).length < 2) {
-        console.log(
-          `[Main] Not enough DEX data for ${pair} (got ${Object.keys(priceData.prices).length} sources).`
-        );
-        continue;
-      }
-
-      const opportunities = findArbitrageOpportunities(
-        priceData,
-        config.max_trade_size_usd,
-        config.min_spread_pct,
-        config.slippage_tolerance_pct
-      );
-
-      if (opportunities.length === 0) {
-        console.log(`[Main] No arbitrage opportunity for ${pair}.`);
-        continue;
-      }
-
-      const best = opportunities[0];
-      console.log(
-        `[Main] Opportunity found: ${best.buy_dex} → ${best.sell_dex} | ` +
-          `spread ${best.spread_pct.toFixed(3)}% | est. profit $${best.estimated_profit_usd}`
-      );
-
-      isExecutingTrade = true;
+  // Fix #4: wrap the entire trade execution in p-limit(1) — not just a flag check
+  return executeLimit(async () => {
+    for (const pair of MONITORED_PAIRS) {
       try {
+        console.log(`[Main] Fetching prices for ${pair}...`);
+        const priceData = await fetchPrices(pair, config.max_trade_size_usd);
+
+        if (Object.keys(priceData.prices).length < 2) {
+          console.log(
+            `[Main] Not enough DEX data for ${pair} (got ${Object.keys(priceData.prices).length} sources).`
+          );
+          continue;
+        }
+
+        const opportunities = findArbitrageOpportunities(
+          priceData,
+          config.max_trade_size_usd,
+          config.min_spread_pct,
+          config.slippage_tolerance_pct
+        );
+
+        if (opportunities.length === 0) {
+          console.log(`[Main] No arbitrage opportunity for ${pair}.`);
+          continue;
+        }
+
+        const best = opportunities[0];
+        console.log(
+          `[Main] Opportunity found: ${best.buy_dex} → ${best.sell_dex} | ` +
+            `spread ${best.spread_pct.toFixed(3)}% | est. profit $${best.estimated_profit_usd}`
+        );
+
         const connection = createConnection(config.solana_rpc_url);
         const wallet = loadWallet(config.solana_wallet_key);
 
@@ -76,9 +106,8 @@ async function monitorCycle(config: Config): Promise<void> {
         const dailyStats = getDailyStats();
 
         if (result.status === "success") {
-          console.log(
-            `[Main] Trade successful. Net PnL: $${result.net_pnl_usd}`
-          );
+          recordWin();
+          console.log(`[Main] Trade successful. Net PnL: $${result.net_pnl_usd}`);
           await alertSuccessfulTrade(
             config.telegram_bot_token,
             config.telegram_chat_id,
@@ -87,6 +116,7 @@ async function monitorCycle(config: Config): Promise<void> {
             dailyStats
           );
         } else if (result.status === "partial") {
+          recordLoss(config);
           console.warn("[Main] Partial trade — manual review needed!");
           await alertPartialTrade(
             config.telegram_bot_token,
@@ -95,6 +125,7 @@ async function monitorCycle(config: Config): Promise<void> {
             result
           );
         } else {
+          recordLoss(config);
           console.log(`[Main] Trade failed: ${result.error}`);
           await alertFailedTrade(
             config.telegram_bot_token,
@@ -103,19 +134,20 @@ async function monitorCycle(config: Config): Promise<void> {
             result
           );
         }
-      } finally {
-        isExecutingTrade = false;
+      } catch (err) {
+        console.error(
+          `[Main] Error in monitor cycle for ${pair}:`,
+          (err as Error).message
+        );
+        await alertError(
+          config.telegram_bot_token,
+          config.telegram_chat_id,
+          `Monitor cycle for ${pair}`,
+          err as Error
+        ).catch(() => {});
       }
-    } catch (err) {
-      console.error(`[Main] Error in monitor cycle for ${pair}:`, (err as Error).message);
-      await alertError(
-        config.telegram_bot_token,
-        config.telegram_chat_id,
-        `Monitor cycle for ${pair}`,
-        err as Error
-      ).catch(() => {}); // don't let Telegram failure crash the loop
     }
-  }
+  });
 }
 
 async function main(): Promise<void> {
