@@ -7,6 +7,8 @@
     "build": "tsc",
     "start": "node dist/main.js",
     "dev": "ts-node src/main.ts",
+    "intel": "ts-node src/intel-scheduler.ts",
+    "intel:build": "tsc && node dist/intel-scheduler.js",
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch"
   },
