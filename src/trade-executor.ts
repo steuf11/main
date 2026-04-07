@@ -9,6 +9,7 @@ import bs58 from "bs58";
 import { v4 as uuidv4 } from "uuid";
 import { ArbitrageOpportunity, TradeResult } from "./types";
 import { TOKEN_MINTS, DECIMALS } from "./token-registry";
+import { executeRaydiumSwap, getRaydiumSwapQuote } from "./raydium-client";
 
 const JUPITER_BASE_URL = "https://quote-api.jup.ag/v6";
 const MIN_SOL_FOR_FEES = 0.05;
@@ -185,66 +186,83 @@ export async function executeArbitrage(
   let sellTxHash: string | null = null;
 
   try {
-    // --- LEG 1: Buy (USDC → SOL) ---
-    const buyQuote = await getJupiterQuote(
-      inputMint,
-      midMint,
-      amountInLamports,
-      slippageBps
-    );
-    const buySwapTxBase64 = await buildJupiterSwapTx(
-      buyQuote,
-      wallet.publicKey.toString()
-    );
-    const buyTx = VersionedTransaction.deserialize(
-      Buffer.from(buySwapTxBase64, "base64")
-    );
-    buyTx.sign([wallet]);
-
+    // ─── LEG 1: Buy (USDC → SOL) ────────────────────────────────────────────
     console.log(`[Trade Executor] Sending buy leg on ${opportunity.buy_dex}...`);
-    buyTxHash = await sendWithRetry(connection, buyTx);
+
+    let solReceived: bigint;
+    let buyFeeUsd = 0;
+
+    if (opportunity.buy_dex === "raydium") {
+      // Route directly through Raydium CLMM — no Jupiter aggregation overhead
+      const raydiumQuote = await getRaydiumSwapQuote(
+        inputMint,
+        midMint,
+        amountInLamports,
+        slippageBps,
+        opportunity.pair
+      );
+      if (!raydiumQuote) {
+        return failed(`Raydium buy quote unavailable for ${opportunity.pair}`);
+      }
+      buyTxHash = await executeRaydiumSwap(
+        connection, wallet, inputMint, midMint,
+        amountInLamports, slippageBps, opportunity.pair
+      );
+      solReceived = BigInt(raydiumQuote.outputAmount);
+      buyFeeUsd = Number(raydiumQuote.feeAmount) / 10 ** quoteDecimals;
+    } else {
+      // Default: Jupiter (routes across all DEXs including Raydium, Orca, etc.)
+      const buyQuote = await getJupiterQuote(inputMint, midMint, amountInLamports, slippageBps);
+      const buySwapTxBase64 = await buildJupiterSwapTx(buyQuote, wallet.publicKey.toString());
+      const buyTx = VersionedTransaction.deserialize(Buffer.from(buySwapTxBase64, "base64"));
+      buyTx.sign([wallet]);
+      buyTxHash = await sendWithRetry(connection, buyTx);
+      solReceived = BigInt(buyQuote.outAmount);
+      buyFeeUsd =
+        (buyQuote.routePlan ?? []).reduce((acc, r) => acc + (r.swapInfo?.feeAmount ?? 0), 0) /
+        10 ** quoteDecimals;
+    }
+
     console.log(`[Trade Executor] Buy leg confirmed: ${buyTxHash}`);
 
-    // Fix #3: outAmount already validated — safe to parse
-    const solReceived = BigInt(buyQuote.outAmount);
-
-    // --- LEG 2: Sell (SOL → USDC) ---
-    const sellQuote = await getJupiterQuote(
-      midMint,
-      outputMint,
-      solReceived,
-      slippageBps
-    );
-    const sellSwapTxBase64 = await buildJupiterSwapTx(
-      sellQuote,
-      wallet.publicKey.toString()
-    );
-    const sellTx = VersionedTransaction.deserialize(
-      Buffer.from(sellSwapTxBase64, "base64")
-    );
-    sellTx.sign([wallet]);
-
+    // ─── LEG 2: Sell (SOL → USDC) ───────────────────────────────────────────
     console.log(`[Trade Executor] Sending sell leg on ${opportunity.sell_dex}...`);
-    sellTxHash = await sendWithRetry(connection, sellTx);
+
+    let usdcReceived: number;
+    let sellFeeUsd = 0;
+
+    if (opportunity.sell_dex === "raydium") {
+      const raydiumQuote = await getRaydiumSwapQuote(
+        midMint,
+        outputMint,
+        solReceived,
+        slippageBps,
+        opportunity.pair
+      );
+      if (!raydiumQuote) {
+        // Buy already executed — this is a partial trade
+        throw new Error(`Raydium sell quote unavailable for ${opportunity.pair} after buy executed`);
+      }
+      sellTxHash = await executeRaydiumSwap(
+        connection, wallet, midMint, outputMint,
+        solReceived, slippageBps, opportunity.pair
+      );
+      usdcReceived = Number(raydiumQuote.outputAmount) / 10 ** quoteDecimals;
+      sellFeeUsd = Number(raydiumQuote.feeAmount) / 10 ** quoteDecimals;
+    } else {
+      const sellQuote = await getJupiterQuote(midMint, outputMint, solReceived, slippageBps);
+      const sellSwapTxBase64 = await buildJupiterSwapTx(sellQuote, wallet.publicKey.toString());
+      const sellTx = VersionedTransaction.deserialize(Buffer.from(sellSwapTxBase64, "base64"));
+      sellTx.sign([wallet]);
+      sellTxHash = await sendWithRetry(connection, sellTx);
+      usdcReceived = Number(BigInt(sellQuote.outAmount)) / 10 ** quoteDecimals;
+      sellFeeUsd =
+        (sellQuote.routePlan ?? []).reduce((acc, r) => acc + (r.swapInfo?.feeAmount ?? 0), 0) /
+        10 ** quoteDecimals;
+    }
+
     console.log(`[Trade Executor] Sell leg confirmed: ${sellTxHash}`);
 
-    // Fix #8: P&L calculated from actual on-chain amounts, not estimates
-    const usdcReceived =
-      Number(BigInt(sellQuote.outAmount)) / 10 ** quoteDecimals;
-
-    // Fees from actual route data (fix #8 — not hardcoded)
-    const buyFeeUsd =
-      (buyQuote.routePlan ?? []).reduce(
-        (acc, r) => acc + (r.swapInfo?.feeAmount ?? 0),
-        0
-      ) /
-      10 ** quoteDecimals;
-    const sellFeeUsd =
-      (sellQuote.routePlan ?? []).reduce(
-        (acc, r) => acc + (r.swapInfo?.feeAmount ?? 0),
-        0
-      ) /
-      10 ** quoteDecimals;
     const totalFeesUsd = buyFeeUsd + sellFeeUsd;
 
     const profitUsd = usdcReceived - tradeSizeUsd;
