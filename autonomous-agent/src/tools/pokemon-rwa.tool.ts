@@ -67,6 +67,7 @@ async function scanPokemonCollections(
   return opps.sort((a, b) => b.discountPct - a.discountPct);
 }
 
+// @ts-ignore – TS2589: LangChain generic depth exceeds TS limit
 export const pokemonRWAScanTool = new DynamicStructuredTool({
   name: "pokemon_rwa_scan",
   description:

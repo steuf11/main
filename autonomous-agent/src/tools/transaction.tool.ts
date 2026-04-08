@@ -28,6 +28,7 @@ export function transactionTool(
   client: ThirdwebClient,
   account: Account
 ): DynamicStructuredTool {
+  // @ts-ignore – TS2589: LangChain generic depth exceeds TS limit
   return new DynamicStructuredTool({
     name: "transaction_execute",
     description:
@@ -90,6 +91,7 @@ export function transactionTool(
           chain: evmChain,
         });
 
+        // @ts-ignore – Thirdweb v5 method/params types are too narrow for dynamic calls
         const tx = prepareContractCall({
           contract,
           method: `function ${method}`,

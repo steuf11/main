@@ -55,7 +55,6 @@ export async function createAgent(config: AgentConfig): Promise<AgentExecutor> {
     model: "claude-3-5-sonnet-20241022",
     temperature: 0.1,
     maxTokens: 1024,
-    timeout: 30_000,
   });
 
   const { client, account } = initThirdwebClient(config);
@@ -73,6 +72,7 @@ export async function createAgent(config: AgentConfig): Promise<AgentExecutor> {
     new MessagesPlaceholder("agent_scratchpad"),
   ]);
 
+  // @ts-ignore – TS2589: LangChain generic depth exceeds TS limit
   const agent = createToolCallingAgent({ llm, tools, prompt });
 
   const executor = new AgentExecutor({

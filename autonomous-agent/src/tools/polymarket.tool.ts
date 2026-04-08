@@ -103,11 +103,13 @@ async function scanForEVOpportunities(
   return opps.sort((a, b) => b.suggestedEV - a.suggestedEV);
 }
 
+// @ts-ignore – TS2589: LangChain generic depth exceeds TS limit
 export const polymarketScanTool = new DynamicStructuredTool({
   name: "polymarket_scan",
   description:
     "Scanne l'API CLOB de Polymarket pour détecter des opportunités EV+. " +
     "À utiliser en premier pour analyser les marchés avant toute exécution.",
+  // @ts-ignore – TS2589: LangChain generic depth exceeds TS limit
   schema: z.object({
     eventSlugs: z.array(z.string()).default([])
       .describe("Slugs d'événements à scanner"),
