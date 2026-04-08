@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Steuf Intel Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+      padding: 12px;
+    }
+    a { color: #00ff88; }
+    h1 { color: #00ff88; font-size: 1.3rem; padding: 8px 0 16px; text-align: center; }
+    h2 { color: #00ff88; font-size: 1rem; margin: 16px 0 8px; border-bottom: 1px solid #21262d; padding-bottom: 4px; }
+    .status-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+      padding: 8px 12px; font-size: 0.75rem; margin-bottom: 12px;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .dot-green { background: #00ff88; }
+    .dot-red { background: #f85149; }
+
+    /* Prices */
+    .prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+    .price-card {
+      background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+      padding: 12px; text-align: center;
+    }
+    .price-card .symbol { font-weight: bold; color: #fff; font-size: 1rem; }
+    .price-card .price { font-size: 1.4rem; font-weight: bold; color: #fff; margin: 4px 0; }
+    .price-card .change { font-size: 0.85rem; font-weight: bold; }
+    .change-up { color: #3fb950; }
+    .change-down { color: #f85149; }
+
+    /* Signals */
+    .signal-card {
+      background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+      padding: 10px 12px; margin-bottom: 8px;
+    }
+    .signal-header { display: flex; justify-content: space-between; align-items: center; }
+    .score-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-weight: bold; font-size: 0.8rem; color: #0d1117;
+    }
+    .score-high { background: #3fb950; }
+    .score-mid { background: #d29922; }
+    .score-low { background: #f85149; }
+    .signal-event { font-weight: bold; color: #fff; flex: 1; margin-right: 8px; }
+    .signal-direction { font-weight: bold; font-size: 0.85rem; margin-right: 8px; }
+    .signal-resume { font-size: 0.8rem; color: #8b949e; margin-top: 4px; }
+    .signal-time { font-size: 0.7rem; color: #484f58; margin-top: 4px; }
+
+    /* Narratives */
+    .narrative-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px 0; border-bottom: 1px solid #21262d; font-size: 0.85rem;
+    }
+    .narrative-token { color: #fff; font-weight: bold; }
+    .narrative-cat { color: #8b949e; font-size: 0.75rem; }
+
+    /* Digest & Action */
+    .digest-box {
+      background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+      padding: 12px; font-size: 0.85rem; line-height: 1.5; white-space: pre-wrap;
+    }
+    .action-box {
+      background: #0b2e13; border: 1px solid #196c2e; border-radius: 6px;
+      padding: 12px; font-size: 0.9rem; font-weight: bold; color: #3fb950;
+      margin-top: 8px;
+    }
+
+    .empty { color: #484f58; font-style: italic; font-size: 0.85rem; padding: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>STEUF INTEL</h1>
+
+  <div class="status-bar">
+    <div><span id="statusDot" class="status-dot dot-red"></span><span id="statusText">Connecting...</span></div>
+    <div id="lastUpdate">—</div>
+  </div>
+
+  <!-- PRIX -->
+  <h2>PRIX</h2>
+  <div class="prices" id="pricesGrid">
+    <p class="empty">En attente de donnees...</p>
+  </div>
+
+  <!-- EV+ SIGNALS -->
+  <h2>EV+ SIGNALS</h2>
+  <div id="signalsList">
+    <p class="empty">Aucun signal</p>
+  </div>
+
+  <!-- TOP NARRATIVES -->
+  <h2>TOP NARRATIVES</h2>
+  <div id="narrativesList">
+    <p class="empty">En attente...</p>
+  </div>
+
+  <!-- DIGEST -->
+  <h2>DIGEST</h2>
+  <div class="digest-box" id="digestBox">En attente du digest Grok...</div>
+
+  <!-- ACTION -->
+  <h2>ACTION</h2>
+  <div class="action-box" id="actionBox">Aucune recommandation</div>
+
+  <script>
+    // ─── State ──────────────────────────────────────────────────────────────
+    let latestIntel = null;
+    let signals = [];
+
+    // ─── Render helpers ─────────────────────────────────────────────────────
+    function formatChange(v) {
+      if (v == null) return "";
+      const sign = v >= 0 ? "+" : "";
+      const cls = v >= 0 ? "change-up" : "change-down";
+      return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
+    }
+
+    function scoreBadge(score) {
+      const n = Number(score) || 0;
+      let cls = "score-low";
+      if (n >= 6) cls = "score-high";
+      else if (n >= 4) cls = "score-mid";
+      return `<span class="score-badge ${cls}">${n}/10</span>`;
+    }
+
+    function timeAgo(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      const now = new Date();
+      const s = Math.floor((now - d) / 1000);
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+      return d.toLocaleDateString("fr-FR");
+    }
+
+    // ─── Render functions ───────────────────────────────────────────────────
+    function renderPrices(prices) {
+      if (!prices) return;
+      const grid = document.getElementById("pricesGrid");
+      grid.innerHTML = Object.entries(prices).map(([sym, d]) => `
+        <div class="price-card">
+          <div class="symbol">${sym}</div>
+          <div class="price">$${Number(d.price).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 4})}</div>
+          <div class="change">${formatChange(d.change_24h)}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderSignals() {
+      const list = document.getElementById("signalsList");
+      if (signals.length === 0) { list.innerHTML = '<p class="empty">Aucun signal</p>'; return; }
+      list.innerHTML = signals.slice(0, 20).map(s => `
+        <div class="signal-card">
+          <div class="signal-header">
+            <span class="signal-event">${s.event || "?"}</span>
+            <span class="signal-direction">${s.direction || ""}</span>
+            ${scoreBadge(s.score)}
+          </div>
+          <div class="signal-resume">${s.resume || ""}</div>
+          <div class="signal-time">${timeAgo(s.timestamp || s.received_at)}</div>
+        </div>
+      `).join("");
+    }
+
+    function renderNarratives(narratives) {
+      const list = document.getElementById("narrativesList");
+      if (!narratives || narratives.length === 0) { list.innerHTML = '<p class="empty">Aucune narrative</p>'; return; }
+      list.innerHTML = narratives.map(n => `
+        <div class="narrative-row">
+          <span><span class="narrative-token">${n.token}</span> <span class="narrative-cat">${n.category || ""}</span></span>
+          <span>${formatChange(n.change_24h)}</span>
+        </div>
+      `).join("");
+    }
+
+    function renderDigest(text) {
+      document.getElementById("digestBox").textContent = text || "En attente...";
+    }
+
+    function renderAction(text) {
+      document.getElementById("actionBox").textContent = text || "Aucune recommandation";
+    }
+
+    function updateTimestamp() {
+      document.getElementById("lastUpdate").textContent = new Date().toLocaleTimeString("fr-FR");
+    }
+
+    // ─── Full render from latest intel ──────────────────────────────────────
+    function renderIntel(entry) {
+      if (!entry) return;
+      latestIntel = entry;
+      renderPrices(entry.prices);
+      renderNarratives(entry.narratives);
+      renderDigest(entry.digest);
+      renderAction(entry.action);
+      updateTimestamp();
+    }
+
+    // ─── Initial load ───────────────────────────────────────────────────────
+    async function loadInitial() {
+      try {
+        const [intelRes, signalsRes] = await Promise.all([
+          fetch("/api/intel").then(r => r.json()),
+          fetch("/api/signals").then(r => r.json()),
+        ]);
+        if (intelRes.length > 0) renderIntel(intelRes[0]);
+        signals = signalsRes;
+        renderSignals();
+      } catch (e) {
+        console.error("Initial load failed:", e);
+      }
+    }
+
+    // ─── SSE ────────────────────────────────────────────────────────────────
+    function connectSSE() {
+      const es = new EventSource("/events");
+      const dot = document.getElementById("statusDot");
+      const txt = document.getElementById("statusText");
+
+      es.addEventListener("connected", () => {
+        dot.className = "status-dot dot-green";
+        txt.textContent = "Live";
+      });
+
+      es.addEventListener("intel", (e) => {
+        const entry = JSON.parse(e.data);
+        renderIntel(entry);
+      });
+
+      es.addEventListener("signal", (e) => {
+        const entry = JSON.parse(e.data);
+        signals.unshift(entry);
+        signals = signals.slice(0, 50);
+        renderSignals();
+        updateTimestamp();
+      });
+
+      es.onerror = () => {
+        dot.className = "status-dot dot-red";
+        txt.textContent = "Reconnecting...";
+      };
+    }
+
+    // ─── Boot ───────────────────────────────────────────────────────────────
+    loadInitial();
+    connectSSE();
+  </script>
+</body>
+</html>
