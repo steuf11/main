@@ -1,0 +1,39 @@
+{
+  "name": "autonomous-multi-chain-agent",
+  "version": "1.0.0",
+  "description": "Agent IA autonome multi-chaînes : Polymarket + Pokémon RWA",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts"
+  },
+  "dependencies": {
+    "@langchain/anthropic": "^0.3.0",
+    "@langchain/core": "^0.3.0",
+    "langchain": "^0.3.0",
+    "thirdweb": "^5.0.0",
+    "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.66.0",
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "winston": "^3.13.0",
+    "zod": "^3.23.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-cron": "^3.0.0",
+    "@types/node-telegram-bot-api": "^0.64.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.5.0",
+    "ts-node": "^10.9.2",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
