@@ -8,7 +8,8 @@
     "start": "node dist/main.js",
     "dev": "ts-node src/main.ts",
     "test": "jest --passWithNoTests",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "hunter": "ts-node --transpile-only --project wallet-hunter/tsconfig.json wallet-hunter/index.ts"
   },
   "jest": {
     "preset": "ts-jest",
