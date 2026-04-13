@@ -214,6 +214,9 @@ export async function fetchWalletStats(address: string): Promise<WalletStats> {
       await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
       // Give JS frameworks extra time to hydrate
       await new Promise((r) => setTimeout(r, 3000));
+      // Save raw HTML for selector debugging
+      const html = await page.content();
+      fs.writeFileSync(path.join(process.cwd(), "lpagent-debug.html"), html);
       return await extractFromPage(page);
     } finally {
       await page.close();
