@@ -1,7 +1,11 @@
-import puppeteer, { Browser, Page } from "puppeteer";
+import puppeteerExtra from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { Browser, Page } from "puppeteer";
 import * as fs from "fs";
 import * as path from "path";
 import { WalletStats } from "./types";
+
+puppeteerExtra.use(StealthPlugin());
 
 const CACHE_DIR = path.join(process.cwd(), ".cache");
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -180,10 +184,10 @@ let sharedBrowser: Browser | null = null;
 
 export async function getBrowser(): Promise<Browser> {
   if (!sharedBrowser || !sharedBrowser.connected) {
-    sharedBrowser = await puppeteer.launch({
+    sharedBrowser = await puppeteerExtra.launch({
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    }) as unknown as Browser;
   }
   return sharedBrowser;
 }
