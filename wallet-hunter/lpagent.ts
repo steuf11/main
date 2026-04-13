@@ -178,7 +178,7 @@ async function withRetry<T>(
 
 let sharedBrowser: Browser | null = null;
 
-async function getBrowser(): Promise<Browser> {
+export async function getBrowser(): Promise<Browser> {
   if (!sharedBrowser || !sharedBrowser.connected) {
     sharedBrowser = await puppeteer.launch({
       headless: true,

@@ -5,6 +5,7 @@ import pLimit from "p-limit";
 import Table from "cli-table3";
 import { createObjectCsvWriter } from "csv-writer";
 import { fetchWalletStats, closeBrowser } from "./lpagent";
+import { fetchFollowers } from "./gmgn";
 import { computeScore } from "./scoring";
 import { applyFilters } from "./filters";
 import { WalletStats, HunterConfig } from "./types";
@@ -91,6 +92,8 @@ function exportJson(wallets: WalletStats[], filename: string): void {
 async function analyzeOne(address: string): Promise<WalletStats> {
   console.log(`Fetching ${address}…`);
   const stats = await fetchWalletStats(address.trim());
+  // Enrich with followers from gmgn (non-blocking — undefined if unavailable)
+  stats.followers = await fetchFollowers(address.trim());
   stats.score = computeScore(stats);
   stats.passesFilter = applyFilters(stats, config.filters);
   return stats;
