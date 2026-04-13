@@ -57,6 +57,48 @@ function parsePercent(raw: string): number {
   return n / 100;
 }
 
+// ─── API response parser (best-effort field mapping) ─────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseApiResponse(json: any): RawLpData | null {
+  // Flatten nested objects one level for easier searching
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const flat: Record<string, any> = {};
+  function flatten(obj: unknown, prefix = ""): void {
+    if (typeof obj !== "object" || obj === null) return;
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      const key = prefix ? `${prefix}.${k}` : k;
+      flat[key] = v;
+      if (typeof v === "object" && v !== null) flatten(v, key);
+    }
+  }
+  flatten(json);
+
+  // Key aliases to look for (lowercase)
+  const find = (aliases: string[]): number => {
+    for (const [k, v] of Object.entries(flat)) {
+      const kl = k.toLowerCase();
+      if (aliases.some((a) => kl.includes(a)) && typeof v === "number") {
+        return v;
+      }
+    }
+    return 0;
+  };
+
+  const totalPositionsClosed = find(["closedposition", "totalposition", "positioncount", "closed"]);
+  const avgInvestedPerPosition = find(["avginvest", "avgsize", "averageinvest"]);
+  const totalProfit = find(["totalprofit", "totalpnl", "totalpl"]);
+  const avgMonthlyProfit = find(["avgmonthly", "monthlyprofit", "monthlypnl"]);
+  const winRateRaw = find(["winrate", "winpct", "winpercent"]);
+  const winRate = winRateRaw > 1 ? winRateRaw / 100 : winRateRaw;
+
+  // Only return if we got at least some meaningful data
+  if (totalPositionsClosed === 0 && totalProfit === 0 && winRate === 0) {
+    return null;
+  }
+  return { totalPositionsClosed, avgInvestedPerPosition, totalProfit, avgMonthlyProfit, winRate };
+}
+
 // ─── DOM extraction (runs inside page context) ────────────────────────────────
 
 interface PageRaw {
@@ -185,8 +227,8 @@ let sharedBrowser: Browser | null = null;
 export async function getBrowser(): Promise<Browser> {
   if (!sharedBrowser || !sharedBrowser.connected) {
     sharedBrowser = await puppeteerExtra.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      headless: false, // visible browser bypasses Cloudflare bot detection
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--start-maximized"],
     }) as unknown as Browser;
   }
   return sharedBrowser;
@@ -210,18 +252,42 @@ export async function fetchWalletStats(address: string): Promise<WalletStats> {
     const browser = await getBrowser();
     const page = await browser.newPage();
     try {
-      await page.setUserAgent(
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      );
-      const url = `https://app.lpagent.io/portfolio?address=${address}`;
-      await page.goto(url, { waitUntil: "networkidle2", timeout: 30_000 });
-      // Give JS frameworks extra time to hydrate
-      await new Promise((r) => setTimeout(r, 3000));
-      // Save raw HTML for selector debugging
+      // Intercept API responses before navigating
+      let apiData: RawLpData | null = null;
+      page.on("response", async (response) => {
+        const url = response.url();
+        // Capture any JSON endpoint that looks like portfolio/stats data
+        if (
+          url.includes(address) ||
+          url.includes("portfolio") ||
+          url.includes("stats") ||
+          url.includes("position")
+        ) {
+          try {
+            const ct = response.headers()["content-type"] ?? "";
+            if (ct.includes("json")) {
+              const json = await response.json().catch(() => null);
+              if (json && !apiData) {
+                apiData = parseApiResponse(json);
+              }
+            }
+          } catch {
+            // ignore non-parseable responses
+          }
+        }
+      });
+
+      const pageUrl = `https://app.lpagent.io/portfolio?address=${address}`;
+      await page.goto(pageUrl, { waitUntil: "networkidle2", timeout: 45_000 });
+      // Extra wait for Cloudflare challenge + JS hydration
+      await new Promise((r) => setTimeout(r, 6000));
+
+      // Save HTML for debugging
       const html = await page.content();
       fs.writeFileSync(path.join(process.cwd(), "lpagent-debug.html"), html);
-      return await extractFromPage(page);
+
+      // Prefer API data if captured, else fall back to DOM
+      return apiData ?? await extractFromPage(page);
     } finally {
       await page.close();
     }
