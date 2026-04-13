@@ -1,0 +1,11 @@
+{
+  "filters": {
+    "minWinRate": 0.55,
+    "minProfitRatio": 0.005,
+    "minPositionsClosed": 10,
+    "minAvgInvestedSOL": 10,
+    "maxFollowers": 15
+  },
+  "concurrency": 5,
+  "outputDir": "./output"
+}
