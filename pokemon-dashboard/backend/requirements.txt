@@ -1,0 +1,5 @@
+fastapi==0.115.0
+uvicorn==0.30.0
+playwright==1.47.0
+python-dotenv==1.0.1
+requests==2.32.0

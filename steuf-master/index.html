@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Steuf Master Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 1.6rem;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #8b949e;
+      font-size: 0.85rem;
+      margin-bottom: 40px;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+      width: 100%;
+      max-width: 600px;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 12px;
+      padding: 30px 24px;
+      text-align: center;
+      text-decoration: none;
+      color: #c9d1d9;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+    }
+    .card-crypto:hover { border-color: #00ff88; }
+    .card-pokemon:hover { border-color: #f0c040; }
+    .card-icon { font-size: 3rem; margin-bottom: 12px; }
+    .card-title { font-size: 1.2rem; font-weight: bold; color: #fff; margin-bottom: 6px; }
+    .card-crypto .card-title { color: #00ff88; }
+    .card-pokemon .card-title { color: #f0c040; }
+    .card-desc { font-size: 0.8rem; color: #8b949e; }
+    .footer {
+      margin-top: 40px;
+      font-size: 0.7rem;
+      color: #484f58;
+    }
+  </style>
+</head>
+<body>
+  <h1>STEUF HQ</h1>
+  <p class="subtitle">Select a dashboard</p>
+
+  <div class="cards">
+    <a href="/crypto/" class="card card-crypto">
+      <div class="card-icon">💰</div>
+      <div class="card-title">Crypto Intel</div>
+      <div class="card-desc">SOL / HYPE / BP signals, EV+ detector, Grok digest</div>
+    </a>
+    <a href="/pokemon/" class="card card-pokemon">
+      <div class="card-icon">🃏</div>
+      <div class="card-title">Pokemon Arbitrage</div>
+      <div class="card-desc">Phygitals scanner, Argus pricing, discount alerts</div>
+    </a>
+  </div>
+
+  <p class="footer">steuf.io — powered by N8N + Claude</p>
+</body>
+</html>
