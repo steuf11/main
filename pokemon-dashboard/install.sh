@@ -5,11 +5,13 @@ echo "=== Installing Pokemon Arbitrage Dashboard ==="
 
 cd "$(dirname "$0")"
 
-# Backend
-echo "[1/4] Installing Python dependencies..."
+# Backend — venv pour Ubuntu 24.04 (PEP 668)
+echo "[1/4] Installing Python dependencies (venv)..."
 cd backend
-pip install -r requirements.txt
-playwright install chromium
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip -q
+.venv/bin/pip install -r requirements.txt
+.venv/bin/playwright install chromium
 cd ..
 
 # Frontend
@@ -31,14 +33,15 @@ cp .env backend/.env 2>/dev/null || true
 echo "[4/4] Starting services..."
 if command -v pm2 &>/dev/null; then
   cd backend
-  pm2 start "uvicorn main:app --host 0.0.0.0 --port 8001" --name pokemon-backend
+  pm2 start ".venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001" --name pokemon-backend
   cd ../frontend
   pm2 start "npm start" --name pokemon-frontend
   pm2 save
   echo "=== Started via PM2: pokemon-backend (8001) + pokemon-frontend (3001) ==="
 else
-  echo "PM2 not installed. Manual start:"
-  echo "  Backend: cd backend && uvicorn main:app --host 0.0.0.0 --port 8001"
+  echo "PM2 not installed. Install with: npm install -g pm2"
+  echo "Then run:"
+  echo "  Backend:  cd backend && .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001"
   echo "  Frontend: cd frontend && npm start"
 fi
 
