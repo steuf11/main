@@ -3,6 +3,7 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
+const fetch = require("node-fetch");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -115,6 +116,64 @@ app.post("/webhook/signals", authMiddleware, (req, res) => {
 
 // Health
 app.get("/health", (_req, res) => res.json({ status: "ok", uptime: process.uptime() }));
+
+// ─── ETF Proxy (SoSoValue) ────────────────────────────────────────────────────
+
+const etfCache = { data: null, fetchedAt: 0 };
+const ETF_TTL = 15 * 60 * 1000; // 15 min
+
+async function fetchSoSoValue(slug) {
+  const url = `https://sosovalue.com/api/etf/${slug}-total`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
+    timeout: 8000,
+  });
+  if (!res.ok) throw new Error(`SoSoValue ${slug} HTTP ${res.status}`);
+  return res.json();
+}
+
+app.get("/api/etf", async (_req, res) => {
+  if (etfCache.data && Date.now() - etfCache.fetchedAt < ETF_TTL) {
+    return res.json(etfCache.data);
+  }
+
+  const [btc, eth, sol] = await Promise.allSettled([
+    fetchSoSoValue("us-btc-spot"),
+    fetchSoSoValue("us-eth-spot"),
+    fetchSoSoValue("us-sol-spot"),
+  ]);
+
+  const parse = (result, ticker) => {
+    if (result.status !== "fulfilled") {
+      console.warn(`[ETF] ${ticker} fetch failed:`, result.reason?.message);
+      return { ticker, error: true };
+    }
+    const d = result.value?.data || result.value || {};
+    return {
+      ticker,
+      totalNetAssets: d.totalNetAssets ?? d.totalAum ?? null,
+      dailyNetInflow: d.dailyNetInflow ?? d.flow1d ?? null,
+      totalNetInflow: d.totalNetInflow ?? d.flowTotal ?? null,
+      etfList: (d.etfList ?? d.list ?? []).slice(0, 5).map(e => ({
+        name: e.name ?? e.shortName ?? e.ticker,
+        dailyFlow: e.dailyNetInflow ?? e.flow1d ?? null,
+        aum: e.totalNetAssets ?? e.aum ?? null,
+      })),
+    };
+  };
+
+  const data = {
+    BTC: parse(btc, "BTC"),
+    ETH: parse(eth, "ETH"),
+    SOL: parse(sol, "SOL"),
+    updatedAt: new Date().toISOString(),
+  };
+
+  etfCache.data = data;
+  etfCache.fetchedAt = Date.now();
+  console.log("[ETF] Refreshed cache");
+  res.json(data);
+});
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 

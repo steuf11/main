@@ -162,6 +162,12 @@
     <p class="loading">Chargement CoinGecko...</p>
   </div>
 
+  <!-- ── INFLOWS ETF ──────────────────────────────────────── -->
+  <h2>INFLOWS ETF — BTC / ETH / SOL</h2>
+  <div id="etfSection">
+    <p class="loading">Chargement...</p>
+  </div>
+
   <!-- ── SIGNAL NARRATIF ──────────────────────────────────── -->
   <h2>SIGNAL NARRATIF DEFI</h2>
   <div class="narrative-signal" id="narrativeSignal">
@@ -629,6 +635,77 @@
     }
 
     // ═══════════════════════════════════════════════════════════
+    // ETF INFLOWS
+    // ═══════════════════════════════════════════════════════════
+
+    async function loadETF() {
+      try {
+        const data = await retry(() => fetch("/api/etf").then(r => r.json()));
+        renderETF(data);
+      } catch (e) {
+        console.error("ETF fetch failed:", e);
+        document.getElementById("etfSection").innerHTML = '<p class="unavailable">ETF data unavailable</p>';
+      }
+    }
+
+    function etfFlowColor(v) {
+      if (v == null) return "color:#484f58";
+      return v >= 0 ? "color:#3fb950" : "color:#f85149";
+    }
+
+    function fmtFlow(v) {
+      if (v == null) return "—";
+      const sign = v >= 0 ? "+" : "";
+      return sign + fmtTVL(v);
+    }
+
+    function renderETF(data) {
+      const tickers = ["BTC", "ETH", "SOL"];
+      const icons = { BTC: "₿", ETH: "Ξ", SOL: "◎" };
+
+      const cards = tickers.map(t => {
+        const d = data[t];
+        if (!d || d.error) return `
+          <div class="card">
+            <div class="card-title">${icons[t]} ${t} ETF</div>
+            <p class="unavailable">Pas encore disponible</p>
+          </div>`;
+
+        const dailyStyle = etfFlowColor(d.dailyNetInflow);
+        const totalStyle = etfFlowColor(d.totalNetInflow);
+
+        const topFunds = (d.etfList || []).map(e => `
+          <div style="display:flex;justify-content:space-between;font-size:0.72rem;padding:2px 0;border-bottom:1px solid #21262d">
+            <span style="color:#8b949e">${e.name || "—"}</span>
+            <span style="${etfFlowColor(e.dailyFlow)}">${fmtFlow(e.dailyFlow)}</span>
+          </div>`).join("");
+
+        return `
+          <div class="card">
+            <div class="card-title">${icons[t]} ${t} ETF</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+              <div>
+                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">FLUX 24H</div>
+                <div style="font-size:1.1rem;font-weight:bold;${dailyStyle}">${fmtFlow(d.dailyNetInflow)}</div>
+              </div>
+              <div>
+                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">FLUX TOTAL</div>
+                <div style="font-size:1.1rem;font-weight:bold;${totalStyle}">${fmtFlow(d.totalNetInflow)}</div>
+              </div>
+              <div style="grid-column:span 2">
+                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">AUM TOTAL</div>
+                <div style="font-size:0.9rem;color:#c9d1d9">${fmtTVL(d.totalNetAssets)}</div>
+              </div>
+            </div>
+            ${topFunds ? `<div style="margin-top:6px">${topFunds}</div>` : ""}
+          </div>`;
+      }).join("");
+
+      document.getElementById("etfSection").innerHTML =
+        `<div class="grid-2" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">${cards}</div>`;
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // SSE — Webhook data (intel + signals)
     // ═══════════════════════════════════════════════════════════
 
@@ -741,6 +818,7 @@
     function manualRefresh() {
       loadPrices();
       loadDefiLlama();
+      loadETF();
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -750,8 +828,10 @@
     connectSSE();
     loadPrices();
     loadDefiLlama();
-    setInterval(loadPrices, 5 * 60 * 1000);
+    loadETF();
+    setInterval(loadPrices,    5 * 60 * 1000);
     setInterval(loadDefiLlama, 5 * 60 * 1000);
+    setInterval(loadETF,      15 * 60 * 1000);
   </script>
 </body>
 </html>
