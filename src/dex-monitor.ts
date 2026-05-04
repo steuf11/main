@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from "axios";
 import { DexPrice, PriceData } from "./types";
 import { TOKEN_MINTS, DECIMALS } from "./token-registry";
+import { fetchRaydiumClmmPrice } from "./raydium-client";
 
 const JUPITER_BASE_URL = "https://quote-api.jup.ag/v6";
 const ORCA_BASE_URL = "https://api.mainnet.orca.so";
@@ -87,16 +88,25 @@ export async function fetchOrcaPrice(
   }
 }
 
+/**
+ * Fetch Raydium price directly from CLMM pool state.
+ * Falls back to the price-list API if no pool is registered for the pair.
+ */
 export async function fetchRaydiumPrice(
   inputMint: string,
-  outputMint: string
+  outputMint: string,
+  pair: string
 ): Promise<DexPrice | null> {
+  // Primary: CLMM pool (accurate, includes real fee rate + liquidity)
+  const clmm = await fetchRaydiumClmmPrice(pair);
+  if (clmm) return clmm;
+
+  // Fallback: price-list API (less accurate, no liquidity data)
   try {
-    const res = await http.get("https://price.raydium.io/list");
-    // Fix #7: validate response shape
-    const prices = res.data?.data;
+    const res = await http.get("https://api.raydium.io/v2/main/price");
+    const prices = res.data?.data ?? res.data;
     if (!prices || typeof prices !== "object") {
-      console.warn("[DEX Monitor] Raydium: unexpected response shape");
+      console.warn("[DEX Monitor] Raydium fallback: unexpected response shape");
       return null;
     }
 
@@ -109,10 +119,10 @@ export async function fetchRaydiumPrice(
       dex: "raydium",
       price: outputPrice / inputPrice,
       liquidity: 0,
-      fee: 0.0025,
+      fee: 0.0025, // standard AMM fee
     };
   } catch (err) {
-    console.error("[DEX Monitor] Raydium fetch failed:", (err as Error).message);
+    console.error("[DEX Monitor] Raydium fallback fetch failed:", (err as Error).message);
     return null;
   }
 }
@@ -139,7 +149,7 @@ export async function fetchPrices(
     ORCA_POOLS[pair]
       ? fetchOrcaPrice(ORCA_POOLS[pair])
       : Promise.resolve(null),
-    fetchRaydiumPrice(inputMint, outputMint),
+    fetchRaydiumPrice(inputMint, outputMint, pair),
   ]);
 
   const prices: Record<string, DexPrice> = {};
