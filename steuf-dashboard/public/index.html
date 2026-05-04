@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Steuf Intel Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -14,28 +15,75 @@
       padding: 12px;
     }
     a { color: #00ff88; }
-    h1 { color: #00ff88; font-size: 1.3rem; padding: 8px 0 16px; text-align: center; }
-    h2 { color: #00ff88; font-size: 1rem; margin: 16px 0 8px; border-bottom: 1px solid #21262d; padding-bottom: 4px; }
+    h1 { color: #00ff88; font-size: 1.3rem; padding: 8px 0 16px; text-align: center; letter-spacing: 4px; }
+    h2 {
+      color: #00ff88; font-size: 0.9rem; margin: 20px 0 8px;
+      border-bottom: 1px solid #21262d; padding-bottom: 4px;
+      letter-spacing: 2px; text-transform: uppercase;
+    }
+
+    /* Status bar */
     .status-bar {
       display: flex; justify-content: space-between; align-items: center;
       background: #161b22; border: 1px solid #21262d; border-radius: 6px;
       padding: 8px 12px; font-size: 0.75rem; margin-bottom: 12px;
     }
     .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-    .dot-green { background: #00ff88; }
+    .dot-green { background: #00ff88; animation: pulse 2s infinite; }
     .dot-red { background: #f85149; }
+    .dot-yellow { background: #d29922; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
-    /* Prices */
-    .prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+    /* Refresh button */
+    .refresh-btn {
+      background: transparent; border: 1px solid #00ff88; color: #00ff88;
+      padding: 3px 10px; border-radius: 4px; font-family: inherit; font-size: 0.75rem;
+      cursor: pointer; transition: background .2s;
+    }
+    .refresh-btn:hover { background: #00ff8820; }
+
+    /* Price cards */
+    .prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
     .price-card {
       background: #161b22; border: 1px solid #21262d; border-radius: 6px;
       padding: 12px; text-align: center;
     }
-    .price-card .symbol { font-weight: bold; color: #fff; font-size: 1rem; }
-    .price-card .price { font-size: 1.4rem; font-weight: bold; color: #fff; margin: 4px 0; }
-    .price-card .change { font-size: 0.85rem; font-weight: bold; }
+    .price-card .symbol { font-weight: bold; color: #fff; font-size: 0.9rem; }
+    .price-card .price { font-size: 1.3rem; font-weight: bold; color: #fff; margin: 4px 0; }
+    .price-card .change { font-size: 0.8rem; font-weight: bold; }
     .change-up { color: #3fb950; }
     .change-down { color: #f85149; }
+
+    /* Tables */
+    .data-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+    .data-table th {
+      color: #8b949e; text-align: left; padding: 6px 8px;
+      border-bottom: 1px solid #21262d; font-weight: normal; font-size: 0.7rem;
+    }
+    .data-table td { padding: 6px 8px; border-bottom: 1px solid #161b22; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: #161b22; }
+    .chain-name { color: #fff; font-weight: bold; }
+    .protocol-name { color: #58a6ff; }
+    .tvl-val { color: #c9d1d9; }
+
+    /* Cards */
+    .card {
+      background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+      padding: 12px; margin-bottom: 8px;
+    }
+    .card-title { color: #8b949e; font-size: 0.7rem; margin-bottom: 8px; letter-spacing: 1px; }
+
+    /* Grid layouts */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    /* Signal narrative */
+    .narrative-signal {
+      background: #0b2e13; border: 1px solid #196c2e; border-radius: 6px;
+      padding: 12px; margin-bottom: 8px;
+    }
+    .narrative-signal p { margin: 4px 0; font-size: 0.85rem; line-height: 1.6; }
 
     /* Signals */
     .signal-card {
@@ -55,7 +103,7 @@
     .signal-resume { font-size: 0.8rem; color: #8b949e; margin-top: 4px; }
     .signal-time { font-size: 0.7rem; color: #484f58; margin-top: 4px; }
 
-    /* Narratives */
+    /* Narrative rows */
     .narrative-row {
       display: flex; justify-content: space-between; align-items: center;
       padding: 4px 0; border-bottom: 1px solid #21262d; font-size: 0.85rem;
@@ -74,102 +122,548 @@
       margin-top: 8px;
     }
 
+    /* Chart container */
+    .chart-container { position: relative; height: 200px; }
+
+    /* Empty & loading */
     .empty { color: #484f58; font-style: italic; font-size: 0.85rem; padding: 8px 0; }
+    .loading { color: #484f58; font-size: 0.78rem; padding: 8px 0; }
+    .unavailable { color: #f85149; font-size: 0.78rem; padding: 8px 0; }
+
+    /* Rank badge */
+    .rank { color: #484f58; width: 24px; display: inline-block; }
+
+    /* Separator */
+    .section-sep {
+      border: none; border-top: 1px solid #21262d;
+      margin: 20px 0;
+    }
   </style>
 </head>
 <body>
-  <h1>STEUF INTEL</h1>
+  <h1>STEUF  INTEL</h1>
 
   <div class="status-bar">
-    <div><span id="statusDot" class="status-dot dot-red"></span><span id="statusText">Connecting...</span></div>
-    <div id="lastUpdate">—</div>
+    <div>
+      <span id="statusDot" class="status-dot dot-red"></span>
+      <span id="statusText">Connecting...</span>
+      &nbsp;|&nbsp;
+      <span id="defiStatus" class="dot-yellow" style="font-size:0.7rem">DeFiLlama: —</span>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <span id="lastUpdate">—</span>
+      <button class="refresh-btn" onclick="manualRefresh()">↻ Refresh</button>
+    </div>
   </div>
 
-  <!-- PRIX -->
+  <!-- ── PRIX ─────────────────────────────────────────────── -->
   <h2>PRIX</h2>
   <div class="prices" id="pricesGrid">
-    <p class="empty">En attente de donnees...</p>
+    <p class="loading">Chargement CoinGecko...</p>
   </div>
 
-  <!-- EV+ SIGNALS -->
+  <!-- ── SIGNAL NARRATIF ──────────────────────────────────── -->
+  <h2>SIGNAL NARRATIF DEFI</h2>
+  <div class="narrative-signal" id="narrativeSignal">
+    <p class="loading">Analyse en cours...</p>
+  </div>
+
+  <!-- ── TOP CHAINS TVL ────────────────────────────────────── -->
+  <h2>TOP CHAINS — TVL</h2>
+  <div class="card">
+    <div id="chainsTable"><p class="loading">Chargement...</p></div>
+  </div>
+
+  <div class="grid-2">
+    <!-- ── PROTOCOLS TOP INFLOWS ── -->
+    <div>
+      <h2>PROTOCOLS TOP INFLOWS (7j)</h2>
+      <div class="card">
+        <div id="protocolsTable"><p class="loading">Chargement...</p></div>
+      </div>
+    </div>
+
+    <!-- ── FEES RÉELLES 24H ── -->
+    <div>
+      <h2>FEES RÉELLES 24H</h2>
+      <div class="card">
+        <div id="feesTable"><p class="loading">Chargement...</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <!-- ── DEX VOLUMES ── -->
+    <div>
+      <h2>DEX VOLUMES 24H</h2>
+      <div class="card">
+        <div id="dexTable"><p class="loading">Chargement...</p></div>
+      </div>
+    </div>
+
+    <!-- ── OPEN INTEREST ── -->
+    <div>
+      <h2>OPEN INTEREST PERPS</h2>
+      <div class="card">
+        <div id="oiTable"><p class="loading">Chargement...</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── STABLECOINS PAR CHAIN ────────────────────────────── -->
+  <h2>STABLECOINS PAR CHAIN (mcap)</h2>
+  <div class="card">
+    <div class="chart-container">
+      <canvas id="stablesChart"></canvas>
+    </div>
+  </div>
+
+  <!-- ── YIELDS SOLANA ─────────────────────────────────────── -->
+  <h2>MEILLEURS YIELDS SOLANA</h2>
+  <div class="card">
+    <div id="yieldsTable"><p class="loading">Chargement...</p></div>
+  </div>
+
+  <hr class="section-sep" />
+
+  <!-- ── EV+ SIGNALS ───────────────────────────────────────── -->
   <h2>EV+ SIGNALS</h2>
   <div id="signalsList">
     <p class="empty">Aucun signal</p>
   </div>
 
-  <!-- TOP NARRATIVES -->
+  <!-- ── TOP NARRATIVES ────────────────────────────────────── -->
   <h2>TOP NARRATIVES</h2>
   <div id="narrativesList">
     <p class="empty">En attente...</p>
   </div>
 
-  <!-- DIGEST -->
+  <!-- ── DIGEST ─────────────────────────────────────────────── -->
   <h2>DIGEST</h2>
-  <div class="digest-box" id="digestBox">En attente du digest Grok...</div>
+  <div class="digest-box" id="digestBox">En attente du digest...</div>
 
-  <!-- ACTION -->
+  <!-- ── ACTION ─────────────────────────────────────────────── -->
   <h2>ACTION</h2>
   <div class="action-box" id="actionBox">Aucune recommandation</div>
 
   <script>
-    // ─── State ──────────────────────────────────────────────────────────────
-    let latestIntel = null;
+    // ═══════════════════════════════════════════════════════════
+    // UTILS
+    // ═══════════════════════════════════════════════════════════
+
+    function fmtTVL(v) {
+      if (v == null || isNaN(v)) return "—";
+      const n = Number(v);
+      if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+      if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+      if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+      return `$${n.toFixed(0)}`;
+    }
+
+    function fmtChange(v) {
+      if (v == null || isNaN(v)) return "<span style='color:#484f58'>—</span>";
+      const n = Number(v);
+      const sign = n >= 0 ? "+" : "";
+      const cls = n >= 0 ? "change-up" : "change-down";
+      return `<span class="${cls}">${sign}${n.toFixed(2)}%</span>`;
+    }
+
+    function fmtPrice(v) {
+      const n = Number(v);
+      if (n >= 1000) return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+      if (n >= 1) return n.toFixed(2);
+      return n.toPrecision(4);
+    }
+
+    async function retry(fn, times = 3, delay = 2000) {
+      for (let i = 0; i < times; i++) {
+        try { return await fn(); }
+        catch (e) {
+          if (i === times - 1) throw e;
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+    }
+
+    function updateTimestamp() {
+      document.getElementById("lastUpdate").textContent =
+        new Date().toLocaleTimeString("fr-FR");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // PRIX — CoinGecko (fallback client-side)
+    // ═══════════════════════════════════════════════════════════
+
+    let pricesFromSSE = false;
+
+    async function loadPrices() {
+      if (pricesFromSSE) return; // SSE data takes priority
+      try {
+        const url = "https://api.coingecko.com/api/v3/simple/price?ids=solana,hyperliquid,ethereum,bitcoin&vs_currencies=usd&include_24hr_change=true";
+        const data = await retry(() => fetch(url).then(r => r.json()));
+        const MAP = { solana: "SOL", hyperliquid: "HYPE", ethereum: "ETH", bitcoin: "BTC" };
+        const prices = {};
+        for (const [id, sym] of Object.entries(MAP)) {
+          if (data[id]) prices[sym] = { price: data[id].usd, change_24h: data[id].usd_24h_change };
+        }
+        renderPrices(prices);
+      } catch (e) {
+        console.error("CoinGecko failed:", e);
+        document.getElementById("pricesGrid").innerHTML = '<p class="unavailable">CoinGecko indisponible</p>';
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // DEFILLAMA
+    // ═══════════════════════════════════════════════════════════
+
+    const LLAMA = "https://api.llama.fi";
+    const STABLES = "https://stablecoins.llama.fi";
+    const YIELDS_API = "https://yields.llama.fi";
+
+    let defiData = {};
+    let stablesChart = null;
+
+    async function fetchLlama(url) {
+      return retry(() => fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }));
+    }
+
+    async function loadDefiLlama() {
+      document.getElementById("defiStatus").textContent = "DeFiLlama: ⏳";
+
+      const results = await Promise.allSettled([
+        fetchLlama(`${LLAMA}/v2/chains`),
+        fetchLlama(`${LLAMA}/protocols`),
+        fetchLlama(`${LLAMA}/overview/fees?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
+        fetchLlama(`${LLAMA}/overview/dexs?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
+        fetchLlama(`${STABLES}/stablecoinchains`),
+        fetchLlama(`${YIELDS_API}/pools`),
+        fetchLlama(`${LLAMA}/overview/perps?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
+      ]);
+
+      const [chains, protocols, fees, dexs, stables, yields, perps] = results;
+
+      if (chains.status === "fulfilled")    renderChains(chains.value);
+      else { document.getElementById("chainsTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
+
+      if (protocols.status === "fulfilled") renderProtocols(protocols.value);
+      else { document.getElementById("protocolsTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
+
+      if (fees.status === "fulfilled")      renderFees(fees.value);
+      else { document.getElementById("feesTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
+
+      if (dexs.status === "fulfilled")      renderDexs(dexs.value);
+      else { document.getElementById("dexTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
+
+      if (stables.status === "fulfilled")   renderStables(stables.value);
+      else { document.getElementById("stablesChart").parentElement.innerHTML = '<p class="unavailable">Data unavailable</p>'; }
+
+      if (yields.status === "fulfilled")    renderYields(yields.value);
+      else { document.getElementById("yieldsTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
+
+      if (perps.status === "fulfilled")     renderOI(perps.value);
+      else { document.getElementById("oiTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
+
+      // Store for narrative
+      defiData = {
+        chains:    chains.status === "fulfilled"    ? chains.value    : null,
+        protocols: protocols.status === "fulfilled" ? protocols.value : null,
+        fees:      fees.status === "fulfilled"      ? fees.value      : null,
+        stables:   stables.status === "fulfilled"   ? stables.value   : null,
+      };
+      renderNarrativeSignal(defiData);
+
+      const ok = results.filter(r => r.status === "fulfilled").length;
+      document.getElementById("defiStatus").textContent = `DeFiLlama: ${ok}/7 ✓`;
+      updateTimestamp();
+    }
+
+    // ── TOP CHAINS TVL ──────────────────────────────────────────
+    function renderChains(data) {
+      const top = [...data]
+        .filter(c => c.tvl > 0)
+        .sort((a, b) => b.tvl - a.tvl)
+        .slice(0, 10);
+
+      const rows = top.map((c, i) => `
+        <tr>
+          <td><span class="rank">${i + 1}</span><span class="chain-name">${c.name}</span></td>
+          <td class="tvl-val">${fmtTVL(c.tvl)}</td>
+          <td>${fmtChange(c.change_1d)}</td>
+          <td>${fmtChange(c.change_7d)}</td>
+        </tr>`).join("");
+
+      document.getElementById("chainsTable").innerHTML = `
+        <table class="data-table">
+          <thead><tr>
+            <th>Chain</th><th>TVL</th><th>24h</th><th>7j</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // ── PROTOCOLS TOP INFLOWS ───────────────────────────────────
+    function renderProtocols(data) {
+      const top = data
+        .filter(p => p.change_7d > 5 && p.tvl > 0)
+        .sort((a, b) => b.change_7d - a.change_7d)
+        .slice(0, 15);
+
+      if (top.length === 0) {
+        document.getElementById("protocolsTable").innerHTML = '<p class="empty">Aucun inflow &gt;5% ce moment</p>';
+        return;
+      }
+
+      const rows = top.map((p, i) => `
+        <tr>
+          <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span></td>
+          <td style="color:#8b949e;font-size:0.7rem">${(p.chain || "Multi").split(",")[0]}</td>
+          <td class="tvl-val">${fmtTVL(p.tvl)}</td>
+          <td>${fmtChange(p.change_7d)}</td>
+        </tr>`).join("");
+
+      document.getElementById("protocolsTable").innerHTML = `
+        <table class="data-table">
+          <thead><tr><th>Protocol</th><th>Chain</th><th>TVL</th><th>7j</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // ── FEES 24H ────────────────────────────────────────────────
+    function renderFees(data) {
+      const protos = (data.protocols || [])
+        .filter(p => p.total24h > 0)
+        .sort((a, b) => b.total24h - a.total24h)
+        .slice(0, 10);
+
+      if (protos.length === 0) {
+        document.getElementById("feesTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
+        return;
+      }
+
+      const rows = protos.map((p, i) => `
+        <tr>
+          <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span></td>
+          <td class="tvl-val">${fmtTVL(p.total24h)}</td>
+          <td class="tvl-val">${p.revenue24h != null ? fmtTVL(p.revenue24h) : "—"}</td>
+        </tr>`).join("");
+
+      document.getElementById("feesTable").innerHTML = `
+        <table class="data-table">
+          <thead><tr><th>Protocol</th><th>Fees 24h</th><th>Rev 24h</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // ── DEX VOLUMES ─────────────────────────────────────────────
+    function renderDexs(data) {
+      const top = (data.protocols || [])
+        .filter(p => p.total24h > 0)
+        .sort((a, b) => b.total24h - a.total24h)
+        .slice(0, 5);
+
+      if (top.length === 0) {
+        document.getElementById("dexTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
+        return;
+      }
+
+      const rows = top.map((p, i) => `
+        <tr>
+          <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span></td>
+          <td class="tvl-val">${fmtTVL(p.total24h)}</td>
+          <td>${fmtChange(p.change_7d)}</td>
+        </tr>`).join("");
+
+      document.getElementById("dexTable").innerHTML = `
+        <table class="data-table">
+          <thead><tr><th>DEX</th><th>Vol 24h</th><th>7j</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // ── STABLECOINS PAR CHAIN ───────────────────────────────────
+    function renderStables(data) {
+      const top = [...data]
+        .filter(c => c.totalCirculatingUSD && c.totalCirculatingUSD.peggedUSD > 0)
+        .sort((a, b) => b.totalCirculatingUSD.peggedUSD - a.totalCirculatingUSD.peggedUSD)
+        .slice(0, 8);
+
+      const labels = top.map(c => c.name);
+      const values = top.map(c => c.totalCirculatingUSD.peggedUSD / 1e9);
+
+      if (stablesChart) stablesChart.destroy();
+      const ctx = document.getElementById("stablesChart").getContext("2d");
+      stablesChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            backgroundColor: "#00ff8840",
+            borderColor: "#00ff88",
+            borderWidth: 1,
+          }]
+        },
+        options: {
+          indexAxis: "y",
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: ctx => `$${ctx.parsed.x.toFixed(2)}B`
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: "#8b949e", font: { size: 10 }, callback: v => `$${v}B` },
+              grid: { color: "#21262d" }
+            },
+            y: {
+              ticks: { color: "#c9d1d9", font: { size: 10, family: "Courier New" } },
+              grid: { display: false }
+            }
+          }
+        }
+      });
+    }
+
+    // ── YIELDS SOLANA ───────────────────────────────────────────
+    function renderYields(data) {
+      const pools = (data.data || data || [])
+        .filter(p => p.chain === "Solana" && p.tvlUsd > 500000 && p.apy > 3)
+        .sort((a, b) => b.apy - a.apy)
+        .slice(0, 8);
+
+      if (pools.length === 0) {
+        document.getElementById("yieldsTable").innerHTML = '<p class="empty">Aucun pool Solana APY &gt;3% TVL &gt;$500K</p>';
+        return;
+      }
+
+      const rows = pools.map((p, i) => `
+        <tr>
+          <td><span class="rank">${i + 1}</span><span class="chain-name">${p.symbol || p.pool}</span></td>
+          <td class="protocol-name">${p.project}</td>
+          <td class="change-up">${p.apy.toFixed(2)}%</td>
+          <td class="tvl-val">${fmtTVL(p.tvlUsd)}</td>
+        </tr>`).join("");
+
+      document.getElementById("yieldsTable").innerHTML = `
+        <table class="data-table">
+          <thead><tr><th>Pool</th><th>Protocol</th><th>APY</th><th>TVL</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // ── OPEN INTEREST ───────────────────────────────────────────
+    function renderOI(data) {
+      const top = (data.protocols || [])
+        .filter(p => p.total24h > 0 || p.totalAllTime > 0)
+        .sort((a, b) => (b.total24h || 0) - (a.total24h || 0))
+        .slice(0, 5);
+
+      if (top.length === 0) {
+        document.getElementById("oiTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
+        return;
+      }
+
+      const rows = top.map((p, i) => `
+        <tr>
+          <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span></td>
+          <td class="tvl-val">${fmtTVL(p.total24h)}</td>
+        </tr>`).join("");
+
+      document.getElementById("oiTable").innerHTML = `
+        <table class="data-table">
+          <thead><tr><th>Protocol</th><th>OI 24h</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // ── SIGNAL NARRATIF ─────────────────────────────────────────
+    function renderNarrativeSignal({ chains, protocols, fees, stables }) {
+      const signals = [];
+
+      // Solana TVL movement
+      if (chains) {
+        const sol = chains.find(c => c.name === "Solana");
+        if (sol) {
+          if (sol.change_7d > 5) signals.push(`🟢 Solana en accumulation — TVL ${sol.change_7d > 0 ? "+" : ""}${sol.change_7d.toFixed(1)}% sur 7j (${fmtTVL(sol.tvl)})`);
+          else if (sol.change_7d < -5) signals.push(`🔴 Sortie de liquidités Solana — TVL ${sol.change_7d.toFixed(1)}% sur 7j`);
+          else signals.push(`🟡 Solana stable — TVL ${sol.change_7d > 0 ? "+" : ""}${sol.change_7d.toFixed(1)}% sur 7j (${fmtTVL(sol.tvl)})`);
+        }
+
+        // Best performing chain
+        const best = [...chains].sort((a, b) => (b.change_7d || 0) - (a.change_7d || 0))[0];
+        if (best && best.change_7d > 10) signals.push(`🚀 Momentum maximal sur ${best.name} — +${best.change_7d.toFixed(1)}% TVL 7j`);
+      }
+
+      // Stablecoin inflows
+      if (stables) {
+        const top = [...stables]
+          .sort((a, b) => (b.totalCirculatingUSD?.peggedUSD || 0) - (a.totalCirculatingUSD?.peggedUSD || 0))
+          .slice(0, 3);
+        if (top.length > 0) signals.push(`💰 Argent frais concentré sur ${top.map(c => c.name).join(", ")} (stablecoins)`);
+      }
+
+      // Dominant fees protocol
+      if (fees?.protocols?.length > 0) {
+        const top = fees.protocols.sort((a, b) => b.total24h - a.total24h)[0];
+        if (top?.total24h > 0) signals.push(`⚡ Activité réelle dominante : ${top.name} (${fmtTVL(top.total24h)} fees 24h)`);
+      }
+
+      // Top protocol inflow
+      if (protocols) {
+        const topInflow = protocols.filter(p => p.change_7d > 0).sort((a, b) => b.change_7d - a.change_7d)[0];
+        if (topInflow?.change_7d > 20) signals.push(`📈 Inflow majeur détecté : ${topInflow.name} +${topInflow.change_7d.toFixed(0)}% TVL 7j`);
+      }
+
+      const el = document.getElementById("narrativeSignal");
+      if (signals.length === 0) {
+        el.innerHTML = '<p class="empty">Aucun signal narratif détecté</p>';
+      } else {
+        el.innerHTML = signals.map(s => `<p>${s}</p>`).join("");
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // SSE — Webhook data (intel + signals)
+    // ═══════════════════════════════════════════════════════════
+
     let signals = [];
 
-    // ─── Render helpers ─────────────────────────────────────────────────────
-    function formatChange(v) {
-      if (v == null) return "";
-      const sign = v >= 0 ? "+" : "";
-      const cls = v >= 0 ? "change-up" : "change-down";
-      return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
-    }
-
-    function scoreBadge(score) {
-      const n = Number(score) || 0;
-      let cls = "score-low";
-      if (n >= 6) cls = "score-high";
-      else if (n >= 4) cls = "score-mid";
-      return `<span class="score-badge ${cls}">${n}/10</span>`;
-    }
-
-    function timeAgo(iso) {
-      if (!iso) return "";
-      const d = new Date(iso);
-      const now = new Date();
-      const s = Math.floor((now - d) / 1000);
-      if (s < 60) return `${s}s ago`;
-      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-      return d.toLocaleDateString("fr-FR");
-    }
-
-    // ─── Render functions ───────────────────────────────────────────────────
     function renderPrices(prices) {
       if (!prices) return;
       const grid = document.getElementById("pricesGrid");
       grid.innerHTML = Object.entries(prices).map(([sym, d]) => `
         <div class="price-card">
           <div class="symbol">${sym}</div>
-          <div class="price">$${Number(d.price).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 4})}</div>
-          <div class="change">${formatChange(d.change_24h)}</div>
-        </div>
-      `).join("");
+          <div class="price">$${fmtPrice(d.price)}</div>
+          <div class="change">${fmtChange(d.change_24h)}</div>
+        </div>`).join("");
     }
 
     function renderSignals() {
       const list = document.getElementById("signalsList");
       if (signals.length === 0) { list.innerHTML = '<p class="empty">Aucun signal</p>'; return; }
-      list.innerHTML = signals.slice(0, 20).map(s => `
-        <div class="signal-card">
+      list.innerHTML = signals.slice(0, 20).map(s => {
+        const n = Number(s.score) || 0;
+        let cls = "score-low";
+        if (n >= 6) cls = "score-high";
+        else if (n >= 4) cls = "score-mid";
+        const ago = timeAgo(s.timestamp || s.received_at);
+        return `<div class="signal-card">
           <div class="signal-header">
             <span class="signal-event">${s.event || "?"}</span>
             <span class="signal-direction">${s.direction || ""}</span>
-            ${scoreBadge(s.score)}
+            <span class="score-badge ${cls}">${n}/10</span>
           </div>
           <div class="signal-resume">${s.resume || ""}</div>
-          <div class="signal-time">${timeAgo(s.timestamp || s.received_at)}</div>
-        </div>
-      `).join("");
+          <div class="signal-time">${ago}</div>
+        </div>`;
+      }).join("");
     }
 
     function renderNarratives(narratives) {
@@ -178,35 +672,29 @@
       list.innerHTML = narratives.map(n => `
         <div class="narrative-row">
           <span><span class="narrative-token">${n.token}</span> <span class="narrative-cat">${n.category || ""}</span></span>
-          <span>${formatChange(n.change_24h)}</span>
-        </div>
-      `).join("");
+          <span>${fmtChange(n.change_24h)}</span>
+        </div>`).join("");
     }
 
-    function renderDigest(text) {
-      document.getElementById("digestBox").textContent = text || "En attente...";
+    function timeAgo(iso) {
+      if (!iso) return "";
+      const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+      return new Date(iso).toLocaleDateString("fr-FR");
     }
 
-    function renderAction(text) {
-      document.getElementById("actionBox").textContent = text || "Aucune recommandation";
-    }
-
-    function updateTimestamp() {
-      document.getElementById("lastUpdate").textContent = new Date().toLocaleTimeString("fr-FR");
-    }
-
-    // ─── Full render from latest intel ──────────────────────────────────────
     function renderIntel(entry) {
       if (!entry) return;
-      latestIntel = entry;
-      renderPrices(entry.prices);
+      if (entry.prices) { pricesFromSSE = true; renderPrices(entry.prices); }
       renderNarratives(entry.narratives);
-      renderDigest(entry.digest);
-      renderAction(entry.action);
+      if (entry.digest) document.getElementById("digestBox").textContent = entry.digest;
+      if (entry.action) document.getElementById("actionBox").textContent = entry.action;
       updateTimestamp();
     }
 
-    // ─── Initial load ───────────────────────────────────────────────────────
+    // ─── Initial load from server ────────────────────────────────
     async function loadInitial() {
       try {
         const [intelRes, signalsRes] = await Promise.all([
@@ -221,7 +709,7 @@
       }
     }
 
-    // ─── SSE ────────────────────────────────────────────────────────────────
+    // ─── SSE ────────────────────────────────────────────────────
     function connectSSE() {
       const es = new EventSource("/events");
       const dot = document.getElementById("statusDot");
@@ -233,13 +721,11 @@
       });
 
       es.addEventListener("intel", (e) => {
-        const entry = JSON.parse(e.data);
-        renderIntel(entry);
+        renderIntel(JSON.parse(e.data));
       });
 
       es.addEventListener("signal", (e) => {
-        const entry = JSON.parse(e.data);
-        signals.unshift(entry);
+        signals.unshift(JSON.parse(e.data));
         signals = signals.slice(0, 50);
         renderSignals();
         updateTimestamp();
@@ -251,9 +737,21 @@
       };
     }
 
-    // ─── Boot ───────────────────────────────────────────────────────────────
+    // ─── Auto-refresh DeFiLlama every 5 min ────────────────────
+    function manualRefresh() {
+      loadPrices();
+      loadDefiLlama();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // BOOT
+    // ═══════════════════════════════════════════════════════════
     loadInitial();
     connectSSE();
+    loadPrices();
+    loadDefiLlama();
+    setInterval(loadPrices, 5 * 60 * 1000);
+    setInterval(loadDefiLlama, 5 * 60 * 1000);
   </script>
 </body>
 </html>
