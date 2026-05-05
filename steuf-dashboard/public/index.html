@@ -209,7 +209,7 @@
 
     <!-- ── OPEN INTEREST ── -->
     <div>
-      <h2>OPEN INTEREST PERPS</h2>
+      <h2>VOLUMES PERPS 24H</h2>
       <div class="card">
         <div id="oiTable"><p class="loading">Chargement...</p></div>
       </div>
@@ -385,25 +385,31 @@
     }
 
     // ── TOP CHAINS TVL ──────────────────────────────────────────
+    // /v2/chains ne fournit pas les % variation — TVL + part de marché
     function renderChains(data) {
       const top = [...data]
         .filter(c => c.tvl > 0)
         .sort((a, b) => b.tvl - a.tvl)
         .slice(0, 10);
 
-      const rows = top.map((c, i) => `
-        <tr>
+      const totalTVL = top.reduce((s, c) => s + c.tvl, 0);
+
+      const rows = top.map((c, i) => {
+        const share = totalTVL > 0 ? ((c.tvl / totalTVL) * 100).toFixed(1) : "—";
+        const barW = totalTVL > 0 ? Math.round((c.tvl / top[0].tvl) * 80) : 0;
+        return `<tr>
           <td><span class="rank">${i + 1}</span><span class="chain-name">${c.name}</span></td>
           <td class="tvl-val">${fmtTVL(c.tvl)}</td>
-          <td>${fmtChange(c.change_1d)}</td>
-          <td>${fmtChange(c.change_7d)}</td>
-        </tr>`).join("");
+          <td style="color:#8b949e;font-size:0.72rem">${share}%</td>
+          <td style="width:80px">
+            <div style="background:#00ff8840;border:1px solid #00ff8860;height:6px;width:${barW}px;border-radius:2px"></div>
+          </td>
+        </tr>`;
+      }).join("");
 
       document.getElementById("chainsTable").innerHTML = `
         <table class="data-table">
-          <thead><tr>
-            <th>Chain</th><th>TVL</th><th>24h</th><th>7j</th>
-          </tr></thead>
+          <thead><tr><th>Chain</th><th>TVL</th><th>Part</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
@@ -411,7 +417,7 @@
     // ── PROTOCOLS TOP INFLOWS ───────────────────────────────────
     function renderProtocols(data) {
       const top = data
-        .filter(p => p.change_7d > 5 && p.tvl > 0)
+        .filter(p => p.change_7d > 5 && p.tvl > 1_000_000) // min $1M TVL
         .sort((a, b) => b.change_7d - a.change_7d)
         .slice(0, 15);
 
@@ -563,11 +569,12 @@
         </table>`;
     }
 
-    // ── OPEN INTEREST ───────────────────────────────────────────
+    // ── VOLUMES PERPS 24H ───────────────────────────────────────
     function renderOI(data) {
-      const top = (data.protocols || [])
-        .filter(p => p.total24h > 0 || p.totalAllTime > 0)
-        .sort((a, b) => (b.total24h || 0) - (a.total24h || 0))
+      const all = data.protocols || data.allProtocols || [];
+      const top = all
+        .filter(p => (p.total24h || p.dailyVolume || 0) > 0)
+        .sort((a, b) => (b.total24h || b.dailyVolume || 0) - (a.total24h || a.dailyVolume || 0))
         .slice(0, 5);
 
       if (top.length === 0) {
@@ -575,15 +582,18 @@
         return;
       }
 
-      const rows = top.map((p, i) => `
-        <tr>
+      const rows = top.map((p, i) => {
+        const vol = p.total24h || p.dailyVolume || 0;
+        return `<tr>
           <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span></td>
-          <td class="tvl-val">${fmtTVL(p.total24h)}</td>
-        </tr>`).join("");
+          <td class="tvl-val">${fmtTVL(vol)}</td>
+          <td>${fmtChange(p.change_7d)}</td>
+        </tr>`;
+      }).join("");
 
       document.getElementById("oiTable").innerHTML = `
         <table class="data-table">
-          <thead><tr><th>Protocol</th><th>OI 24h</th></tr></thead>
+          <thead><tr><th>Protocol</th><th>Vol 24h</th><th>7j</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
@@ -592,46 +602,55 @@
     function renderNarrativeSignal({ chains, protocols, fees, stables }) {
       const signals = [];
 
-      // Solana TVL movement
+      // Chains — rang Solana et leader
       if (chains) {
-        const sol = chains.find(c => c.name === "Solana");
+        const sorted = [...chains].filter(c => c.tvl > 0).sort((a, b) => b.tvl - a.tvl);
+        const solIdx = sorted.findIndex(c => c.name === "Solana");
+        const sol = sorted.find(c => c.name === "Solana");
+        const leader = sorted[0];
         if (sol) {
-          if (sol.change_7d > 5) signals.push(`🟢 Solana en accumulation — TVL ${sol.change_7d > 0 ? "+" : ""}${sol.change_7d.toFixed(1)}% sur 7j (${fmtTVL(sol.tvl)})`);
-          else if (sol.change_7d < -5) signals.push(`🔴 Sortie de liquidités Solana — TVL ${sol.change_7d.toFixed(1)}% sur 7j`);
-          else signals.push(`🟡 Solana stable — TVL ${sol.change_7d > 0 ? "+" : ""}${sol.change_7d.toFixed(1)}% sur 7j (${fmtTVL(sol.tvl)})`);
+          signals.push(`🟡 Solana #${solIdx + 1} mondial — TVL ${fmtTVL(sol.tvl)} (leader : ${leader.name} ${fmtTVL(leader.tvl)})`);
         }
-
-        // Best performing chain
-        const best = [...chains].sort((a, b) => (b.change_7d || 0) - (a.change_7d || 0))[0];
-        if (best && best.change_7d > 10) signals.push(`🚀 Momentum maximal sur ${best.name} — +${best.change_7d.toFixed(1)}% TVL 7j`);
       }
 
-      // Stablecoin inflows
+      // Protocoles — top inflows ($1M+ TVL)
+      if (protocols) {
+        const bigInflows = protocols
+          .filter(p => p.change_7d > 20 && p.tvl > 1_000_000)
+          .sort((a, b) => b.change_7d - a.change_7d)
+          .slice(0, 3);
+        if (bigInflows.length > 0)
+          signals.push(`📈 Inflows majeurs 7j : ${bigInflows.map(p => `${p.name} +${p.change_7d.toFixed(0)}%`).join(" · ")}`);
+
+        const solProtos = protocols
+          .filter(p => (p.chain || "").includes("Solana") && p.change_7d > 10 && p.tvl > 500_000)
+          .sort((a, b) => b.change_7d - a.change_7d)
+          .slice(0, 3);
+        if (solProtos.length > 0)
+          signals.push(`☀️ Solana DeFi : ${solProtos.map(p => `${p.name} +${p.change_7d.toFixed(0)}%`).join(" · ")}`);
+      }
+
+      // Fees — top 3 protocols
+      if (fees?.protocols?.length > 0) {
+        const top3 = [...fees.protocols].filter(p => p.total24h > 0).sort((a, b) => b.total24h - a.total24h).slice(0, 3);
+        if (top3.length > 0)
+          signals.push(`⚡ Fees 24h : ${top3.map(p => `${p.name} ${fmtTVL(p.total24h)}`).join(" · ")}`);
+      }
+
+      // Stablecoins
       if (stables) {
-        const top = [...stables]
+        const top3 = [...stables]
+          .filter(c => c.totalCirculatingUSD?.peggedUSD > 0)
           .sort((a, b) => (b.totalCirculatingUSD?.peggedUSD || 0) - (a.totalCirculatingUSD?.peggedUSD || 0))
           .slice(0, 3);
-        if (top.length > 0) signals.push(`💰 Argent frais concentré sur ${top.map(c => c.name).join(", ")} (stablecoins)`);
-      }
-
-      // Dominant fees protocol
-      if (fees?.protocols?.length > 0) {
-        const top = fees.protocols.sort((a, b) => b.total24h - a.total24h)[0];
-        if (top?.total24h > 0) signals.push(`⚡ Activité réelle dominante : ${top.name} (${fmtTVL(top.total24h)} fees 24h)`);
-      }
-
-      // Top protocol inflow
-      if (protocols) {
-        const topInflow = protocols.filter(p => p.change_7d > 0).sort((a, b) => b.change_7d - a.change_7d)[0];
-        if (topInflow?.change_7d > 20) signals.push(`📈 Inflow majeur détecté : ${topInflow.name} +${topInflow.change_7d.toFixed(0)}% TVL 7j`);
+        if (top3.length > 0)
+          signals.push(`💰 Stablecoins : ${top3.map(c => `${c.name} ${fmtTVL(c.totalCirculatingUSD.peggedUSD)}`).join(" · ")}`);
       }
 
       const el = document.getElementById("narrativeSignal");
-      if (signals.length === 0) {
-        el.innerHTML = '<p class="empty">Aucun signal narratif détecté</p>';
-      } else {
-        el.innerHTML = signals.map(s => `<p>${s}</p>`).join("");
-      }
+      el.innerHTML = signals.length > 0
+        ? signals.map(s => `<p>${s}</p>`).join("")
+        : '<p class="empty">Aucun signal détecté</p>';
     }
 
     // ═══════════════════════════════════════════════════════════
