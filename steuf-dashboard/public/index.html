@@ -551,20 +551,40 @@
       "EURC","FRAX","LUSD","GUSD","MIM","ALUSD","USDB","SUSD","CUSD","EURS"
     ]);
 
+    const LS_SYMBOLS = ["BTC","ETH","SOL","XRP","BNB","DOGE","ADA","AVAX","LINK","TON","SUI","HOOD"];
+
+    async function fetchLongShortRatios() {
+      const results = await Promise.allSettled(
+        LS_SYMBOLS.map(coin =>
+          fetch(`https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${coin}USDT&period=1h&limit=1`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => d?.[0] ? { coin, ratio: parseFloat(d[0].longShortRatio) } : null)
+        )
+      );
+      const map = {};
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value) map[r.value.coin] = r.value.ratio;
+      }
+      return map;
+    }
+
     async function loadOI() {
       try {
-        const data = await retry(() =>
-          fetch("https://api.coingecko.com/api/v3/derivatives")
-            .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-        );
-        renderOIAgg(data);
+        const [cgData, lsMap] = await Promise.all([
+          retry(() =>
+            fetch("https://api.coingecko.com/api/v3/derivatives")
+              .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+          ),
+          fetchLongShortRatios().catch(() => ({})),
+        ]);
+        renderOIAgg(cgData, lsMap);
       } catch (e) {
         console.error("OI fetch failed:", e);
         document.getElementById("oiAggTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
       }
     }
 
-    function renderOIAgg(data) {
+    function renderOIAgg(data, lsMap = {}) {
       const map = {};
       for (const d of data) {
         const coin = (d.index_id || d.symbol || "").split(/[-/]/)[0].replace(/PERP$/, "").trim().toUpperCase();
@@ -588,17 +608,29 @@
 
       const rows = top.map((c, i) => {
         const avgChg = c.changes.length ? c.changes.reduce((s, v) => s + v, 0) / c.changes.length : null;
+        const ls = lsMap[c.coin];
+        let lsHtml;
+        if (ls == null) {
+          lsHtml = `<span style="color:#484f58">—</span>`;
+        } else if (ls > 1.05) {
+          lsHtml = `<span style="color:#3fb950;font-weight:600">${ls.toFixed(2)} 🟢</span>`;
+        } else if (ls < 0.95) {
+          lsHtml = `<span style="color:#f85149;font-weight:600">${ls.toFixed(2)} 🔴</span>`;
+        } else {
+          lsHtml = `<span style="color:#d29922">${ls.toFixed(2)} ◆</span>`;
+        }
         return `<tr>
           <td><span class="rank">${i + 1}</span><span class="chain-name">${c.coin}</span></td>
           <td class="tvl-val">${fmtTVL(c.totalOI)}</td>
           <td>${fmtChange(avgChg)}</td>
+          <td>${lsHtml}</td>
           <td style="color:#484f58;font-size:0.7rem">${c.markets} marchés</td>
         </tr>`;
       }).join("");
 
       document.getElementById("oiAggTable").innerHTML = `
         <table class="data-table">
-          <thead><tr><th>Actif</th><th>OI Total</th><th>24h</th><th></th></tr></thead>
+          <thead><tr><th>Actif</th><th>OI Total</th><th>24h</th><th>L/S Ratio</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
