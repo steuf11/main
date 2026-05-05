@@ -232,25 +232,11 @@
 
   <hr class="section-sep" />
 
-  <!-- ── EV+ SIGNALS ───────────────────────────────────────── -->
-  <h2>EV+ SIGNALS</h2>
-  <div id="signalsList">
-    <p class="empty">Aucun signal</p>
-  </div>
-
   <!-- ── TOP NARRATIVES ────────────────────────────────────── -->
   <h2>TOP NARRATIVES</h2>
   <div id="narrativesList">
     <p class="empty">En attente...</p>
   </div>
-
-  <!-- ── DIGEST ─────────────────────────────────────────────── -->
-  <h2>DIGEST</h2>
-  <div class="digest-box" id="digestBox">En attente du digest...</div>
-
-  <!-- ── ACTION ─────────────────────────────────────────────── -->
-  <h2>ACTION</h2>
-  <div class="action-box" id="actionBox">Aucune recommandation</div>
 
   <script>
     // ═══════════════════════════════════════════════════════════
@@ -380,7 +366,6 @@
         yields:    yields.status === "fulfilled"     ? yields.value    : null,
       };
       renderNarrativeSignal(defiData);
-      autoFillIntelSections(defiData);
 
       const ok = results.filter(r => r.status === "fulfilled").length;
       document.getElementById("defiStatus").textContent = `DeFiLlama: ${ok}/6 ✓`;
@@ -390,77 +375,6 @@
     // ── AUTO-FILL intel sections from DeFiLlama (si pas de webhook) ──────────
     let intelFromSSE = false;
     let narrativesFromGrok = false;
-
-    function autoFillIntelSections({ chains, protocols, fees, stables, yields }) {
-      if (intelFromSSE) return; // données webhook prioritaires
-
-      // ── TOP NARRATIVES : protocoles avec fort inflow 7j (fallback si Grok indispo) ──
-      if (!narrativesFromGrok && protocols) {
-        const narratives = protocols
-          .filter(p => p.change_7d > 15 && p.tvl > 1_000_000)
-          .sort((a, b) => b.change_7d - a.change_7d)
-          .slice(0, 8)
-          .map(p => ({
-            token: p.name,
-            category: (p.chain || "Multi").split(",")[0],
-            change_24h: p.change_7d,
-          }));
-        if (narratives.length > 0) renderNarratives(narratives);
-      }
-
-      // ── DIGEST : résumé textuel auto-généré ──
-      const lines = [];
-      const now = new Date().toLocaleString("fr-FR", { timeZone: "Europe/Paris", dateStyle: "short", timeStyle: "short" });
-      lines.push(`📊 AUTO-DIGEST — ${now}`);
-      lines.push("");
-
-      if (chains) {
-        const sorted = [...chains].filter(c => c.tvl > 0).sort((a, b) => b.tvl - a.tvl);
-        const sol = sorted.find(c => c.name === "Solana");
-        const eth = sorted.find(c => c.name === "Ethereum");
-        if (eth) lines.push(`🔵 Ethereum TVL : ${fmtTVL(eth.tvl)} (#1 mondial)`);
-        if (sol) lines.push(`☀️ Solana TVL : ${fmtTVL(sol.tvl)} (#${sorted.findIndex(c => c.name === "Solana") + 1} mondial)`);
-      }
-
-      if (fees?.protocols?.length > 0) {
-        const top = [...fees.protocols].filter(p => p.total24h > 0).sort((a, b) => b.total24h - a.total24h)[0];
-        if (top) lines.push(`⚡ Protocol le + actif : ${top.name} (${fmtTVL(top.total24h)} fees 24h)`);
-      }
-
-      if (protocols) {
-        const topInflow = protocols.filter(p => p.tvl > 1_000_000 && p.change_7d > 0)
-          .sort((a, b) => b.change_7d - a.change_7d)[0];
-        if (topInflow) lines.push(`📈 Meilleur inflow 7j : ${topInflow.name} +${topInflow.change_7d.toFixed(0)}% TVL`);
-      }
-
-      if (stables) {
-        const topStable = [...stables]
-          .filter(c => c.totalCirculatingUSD?.peggedUSD > 0)
-          .sort((a, b) => (b.totalCirculatingUSD?.peggedUSD || 0) - (a.totalCirculatingUSD?.peggedUSD || 0))[0];
-        if (topStable) lines.push(`💰 1er stablecoin hub : ${topStable.name} (${fmtTVL(topStable.totalCirculatingUSD.peggedUSD)})`);
-      }
-
-      if (yields) {
-        const pools = (yields.data || yields || [])
-          .filter(p => p.chain === "Solana" && p.tvlUsd > 1_000_000 && p.apy > 5)
-          .sort((a, b) => b.apy - a.apy)[0];
-        if (pools) lines.push(`🌾 Meilleur yield Solana : ${pools.symbol || pools.pool} @ ${pools.apy.toFixed(1)}% APY`);
-      }
-
-      if (lines.length > 2) {
-        document.getElementById("digestBox").textContent = lines.join("\n");
-      }
-
-      // ── ACTION : dérivée du contexte ──
-      if (protocols && chains) {
-        const solData = chains.find(c => c.name === "Solana");
-        const solInflows = protocols.filter(p => (p.chain || "").includes("Solana") && p.change_7d > 10).length;
-        let action = "Aucune recommandation";
-        if (solInflows >= 3) action = `🟢 Momentum Solana DeFi — ${solInflows} protocoles en inflow >10% sur 7j`;
-        else if (solData) action = `🟡 Solana #${[...chains].filter(c => c.tvl > 0).sort((a, b) => b.tvl - a.tvl).findIndex(c => c.name === "Solana") + 1} TVL mondial — surveiller opportunités`;
-        document.getElementById("actionBox").textContent = action;
-      }
-    }
 
     // ── TOP CHAINS TVL ──────────────────────────────────────────
     // /v2/chains ne fournit pas les % variation — TVL + part de marché
@@ -983,8 +897,6 @@
       intelFromSSE = true;
       if (entry.prices) { pricesFromSSE = true; renderPrices(entry.prices); }
       if (entry.narratives) renderNarratives(entry.narratives);
-      if (entry.digest) document.getElementById("digestBox").textContent = entry.digest;
-      if (entry.action) document.getElementById("actionBox").textContent = entry.action;
       updateTimestamp();
     }
 
@@ -1031,7 +943,32 @@
       };
     }
 
-    // ─── Grok Narratives ────────────────────────────────────────
+    // ─── CoinGecko Categories (top narratives) ──────────────────
+    async function loadCGNarratives() {
+      if (narrativesFromGrok) return; // Grok prioritaire
+      try {
+        const data = await fetch(
+          "https://api.coingecko.com/api/v3/coins/categories?order=market_cap_change_24h_desc"
+        ).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+        const top5 = data
+          .filter(c => c.market_cap_change_24h != null)
+          .slice(0, 5)
+          .map(c => ({
+            token: c.name,
+            category: "CoinGecko",
+            sentiment: c.market_cap_change_24h > 0 ? "bullish" : "bearish",
+            change_24h: c.market_cap_change_24h,
+            resume: c.top_3_coins_id?.slice(0, 3).join(", ") || "",
+          }));
+
+        if (top5.length > 0) renderNarratives(top5);
+      } catch (e) {
+        console.error("[CG Narratives] failed:", e);
+      }
+    }
+
+    // ─── Grok Narratives (override CoinGecko si dispo) ──────────
     async function loadNarratives() {
       try {
         const data = await fetch("/api/narratives").then(r => r.json());
@@ -1060,12 +997,14 @@
     loadDefiLlama();
     loadOI();
     loadETF();
+    loadCGNarratives();
     loadNarratives();
-    setInterval(loadPrices,      5 * 60 * 1000);
-    setInterval(loadDefiLlama,   5 * 60 * 1000);
-    setInterval(loadOI,          5 * 60 * 1000);
-    setInterval(loadETF,        15 * 60 * 1000);
-    setInterval(loadNarratives, 30 * 60 * 1000);
+    setInterval(loadPrices,        5 * 60 * 1000);
+    setInterval(loadDefiLlama,     5 * 60 * 1000);
+    setInterval(loadOI,            5 * 60 * 1000);
+    setInterval(loadETF,          15 * 60 * 1000);
+    setInterval(loadCGNarratives,  5 * 60 * 1000);
+    setInterval(loadNarratives,   30 * 60 * 1000);
   </script>
 </body>
 </html>
