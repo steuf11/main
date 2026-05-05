@@ -344,7 +344,7 @@
         fetchLlama(`${LLAMA}/overview/dexs?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
         fetchLlama(`${STABLES}/stablecoinchains`),
         fetchLlama(`${YIELDS_API}/pools`),
-        fetchLlama(`${LLAMA}/overview/perps?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
+        fetchLlama(`${LLAMA}/overview/derivatives?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
       ]);
 
       const [chains, protocols, fees, dexs, stables, yields, perps] = results;
@@ -457,12 +457,12 @@
         <tr>
           <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span></td>
           <td class="tvl-val">${fmtTVL(p.total24h)}</td>
-          <td class="tvl-val">${p.revenue24h != null ? fmtTVL(p.revenue24h) : "—"}</td>
+          <td>${fmtChange(p.change_7d)}</td>
         </tr>`).join("");
 
       document.getElementById("feesTable").innerHTML = `
         <table class="data-table">
-          <thead><tr><th>Protocol</th><th>Fees 24h</th><th>Rev 24h</th></tr></thead>
+          <thead><tr><th>Protocol</th><th>Fees 24h</th><th>7j</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
@@ -687,16 +687,16 @@
         if (!d || d.error) return `
           <div class="card">
             <div class="card-title">${icons[t]} ${t} ETF</div>
-            <p class="unavailable">Pas encore disponible</p>
+            <p style="color:#484f58;font-size:0.78rem">Pas de données (tickers non listés sur YF)</p>
           </div>`;
 
-        const dailyStyle = etfFlowColor(d.dailyNetInflow);
-        const totalStyle = etfFlowColor(d.totalNetInflow);
+        const chgStyle = etfFlowColor(d.avgChange24h);
 
-        const topFunds = (d.etfList || []).map(e => `
-          <div style="display:flex;justify-content:space-between;font-size:0.72rem;padding:2px 0;border-bottom:1px solid #21262d">
-            <span style="color:#8b949e">${e.name || "—"}</span>
-            <span style="${etfFlowColor(e.dailyFlow)}">${fmtFlow(e.dailyFlow)}</span>
+        const rows = (d.etfList || []).map(e => `
+          <div style="display:flex;justify-content:space-between;font-size:0.72rem;padding:3px 0;border-bottom:1px solid #21262d">
+            <span style="color:#58a6ff;font-weight:bold">${e.name}</span>
+            <span style="${etfFlowColor(e.change24h)}">${e.change24h != null ? (e.change24h >= 0 ? "+" : "") + e.change24h.toFixed(2) + "%" : "—"}</span>
+            <span style="color:#8b949e">${fmtTVL(e.aum)}</span>
           </div>`).join("");
 
         return `
@@ -704,19 +704,19 @@
             <div class="card-title">${icons[t]} ${t} ETF</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
               <div>
-                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">FLUX 24H</div>
-                <div style="font-size:1.1rem;font-weight:bold;${dailyStyle}">${fmtFlow(d.dailyNetInflow)}</div>
+                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">PERF MOY 24H</div>
+                <div style="font-size:1.1rem;font-weight:bold;${chgStyle}">${d.avgChange24h != null ? (d.avgChange24h >= 0 ? "+" : "") + d.avgChange24h.toFixed(2) + "%" : "—"}</div>
               </div>
               <div>
-                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">FLUX TOTAL</div>
-                <div style="font-size:1.1rem;font-weight:bold;${totalStyle}">${fmtFlow(d.totalNetInflow)}</div>
+                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">AUM TOTAL</div>
+                <div style="font-size:1rem;color:#c9d1d9">${fmtTVL(d.totalNetAssets)}</div>
               </div>
               <div style="grid-column:span 2">
-                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">AUM TOTAL</div>
-                <div style="font-size:0.9rem;color:#c9d1d9">${fmtTVL(d.totalNetAssets)}</div>
+                <div style="color:#484f58;font-size:0.65rem;margin-bottom:2px">VOL 24H (proxy inflows)</div>
+                <div style="font-size:0.9rem;color:#c9d1d9">${fmtTVL(d.dailyNetInflow)}</div>
               </div>
             </div>
-            ${topFunds ? `<div style="margin-top:6px">${topFunds}</div>` : ""}
+            ${rows ? `<div>${rows}</div>` : ""}
           </div>`;
       }).join("");
 

@@ -117,19 +117,60 @@ app.post("/webhook/signals", authMiddleware, (req, res) => {
 // Health
 app.get("/health", (_req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 
-// ─── ETF Proxy (SoSoValue) ────────────────────────────────────────────────────
+// ─── ETF Proxy (Yahoo Finance) ───────────────────────────────────────────────
 
 const etfCache = { data: null, fetchedAt: 0 };
-const ETF_TTL = 15 * 60 * 1000; // 15 min
+const ETF_TTL = 15 * 60 * 1000;
 
-async function fetchSoSoValue(slug) {
-  const url = `https://sosovalue.com/api/etf/${slug}-total`;
+const ETF_TICKERS = {
+  BTC: ["IBIT", "FBTC", "ARKB", "BITB"],
+  ETH: ["ETHA", "FETH", "ETHW"],
+  SOL: ["SOLZ", "CSOL", "VSOL", "GSOL"],
+};
+
+async function fetchYFQuote(ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=2d&interval=1d`;
   const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
+    headers: { "User-Agent": "Mozilla/5.0 (compatible)", "Accept": "application/json" },
     timeout: 8000,
   });
-  if (!res.ok) throw new Error(`SoSoValue ${slug} HTTP ${res.status}`);
-  return res.json();
+  if (!res.ok) throw new Error(`YF ${ticker} HTTP ${res.status}`);
+  const json = await res.json();
+  const meta = json.chart?.result?.[0]?.meta;
+  if (!meta) throw new Error(`YF ${ticker} no meta`);
+  const prev = meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice;
+  const price = meta.regularMarketPrice;
+  return {
+    ticker,
+    price,
+    change24h: prev ? ((price - prev) / prev) * 100 : null,
+    volume24hUSD: (meta.regularMarketVolume || 0) * price,
+    marketCap: meta.marketCap || null,
+  };
+}
+
+async function fetchETFGroup(tickers) {
+  const results = await Promise.allSettled(tickers.map(t => fetchYFQuote(t)));
+  return results.map(r => r.status === "fulfilled" ? r.value : null).filter(Boolean);
+}
+
+function summarizeETF(quotes, crypto) {
+  if (quotes.length === 0) return { crypto, error: true };
+  const totalAUM    = quotes.reduce((s, q) => s + (q.marketCap || 0), 0);
+  const totalVol    = quotes.reduce((s, q) => s + (q.volume24hUSD || 0), 0);
+  const avgChange   = quotes.reduce((s, q) => s + (q.change24h || 0), 0) / quotes.length;
+  return {
+    crypto,
+    totalNetAssets: totalAUM || null,
+    dailyNetInflow: totalVol || null,   // volume = proxy inflow
+    avgChange24h:   avgChange,
+    etfList: quotes.slice(0, 4).map(q => ({
+      name: q.ticker,
+      change24h: q.change24h,
+      volume24h: q.volume24hUSD,
+      aum: q.marketCap,
+    })),
+  };
 }
 
 app.get("/api/etf", async (_req, res) => {
@@ -137,41 +178,22 @@ app.get("/api/etf", async (_req, res) => {
     return res.json(etfCache.data);
   }
 
-  const [btc, eth, sol] = await Promise.allSettled([
-    fetchSoSoValue("us-btc-spot"),
-    fetchSoSoValue("us-eth-spot"),
-    fetchSoSoValue("us-sol-spot"),
+  const [btcQ, ethQ, solQ] = await Promise.all([
+    fetchETFGroup(ETF_TICKERS.BTC),
+    fetchETFGroup(ETF_TICKERS.ETH),
+    fetchETFGroup(ETF_TICKERS.SOL),
   ]);
 
-  const parse = (result, ticker) => {
-    if (result.status !== "fulfilled") {
-      console.warn(`[ETF] ${ticker} fetch failed:`, result.reason?.message);
-      return { ticker, error: true };
-    }
-    const d = result.value?.data || result.value || {};
-    return {
-      ticker,
-      totalNetAssets: d.totalNetAssets ?? d.totalAum ?? null,
-      dailyNetInflow: d.dailyNetInflow ?? d.flow1d ?? null,
-      totalNetInflow: d.totalNetInflow ?? d.flowTotal ?? null,
-      etfList: (d.etfList ?? d.list ?? []).slice(0, 5).map(e => ({
-        name: e.name ?? e.shortName ?? e.ticker,
-        dailyFlow: e.dailyNetInflow ?? e.flow1d ?? null,
-        aum: e.totalNetAssets ?? e.aum ?? null,
-      })),
-    };
-  };
-
   const data = {
-    BTC: parse(btc, "BTC"),
-    ETH: parse(eth, "ETH"),
-    SOL: parse(sol, "SOL"),
+    BTC: summarizeETF(btcQ, "BTC"),
+    ETH: summarizeETF(ethQ, "ETH"),
+    SOL: summarizeETF(solQ, "SOL"),
     updatedAt: new Date().toISOString(),
   };
 
   etfCache.data = data;
   etfCache.fetchedAt = Date.now();
-  console.log("[ETF] Refreshed cache");
+  console.log(`[ETF] BTC: ${btcQ.length} tickers, ETH: ${ethQ.length}, SOL: ${solQ.length}`);
   res.json(data);
 });
 
