@@ -207,11 +207,11 @@
       </div>
     </div>
 
-    <!-- ── VOLUMES PERPS ── -->
+    <!-- ── BUYBACKS ── -->
     <div>
-      <h2>VOLUMES PERPS 24H</h2>
+      <h2>BUYBACKS & REVENUS PROTOCOLS</h2>
       <div class="card">
-        <div id="oiTable"><p class="loading">Chargement...</p></div>
+        <div id="buybackTable"><p class="loading">Chargement...</p></div>
       </div>
     </div>
   </div>
@@ -354,8 +354,13 @@
       if (protocols.status === "fulfilled") renderProtocols(protocols.value);
       else { document.getElementById("protocolsTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
 
-      if (fees.status === "fulfilled")      renderFees(fees.value);
-      else { document.getElementById("feesTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
+      if (fees.status === "fulfilled") {
+        renderFees(fees.value);
+        renderBuybacks(fees.value);
+      } else {
+        document.getElementById("feesTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
+        document.getElementById("buybackTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
+      }
 
       if (stables.status === "fulfilled")   renderStables(stables.value);
       else { document.getElementById("stablesChart").parentElement.innerHTML = '<p class="unavailable">Data unavailable</p>'; }
@@ -673,31 +678,73 @@
         </table>`;
     }
 
-    // ── VOLUMES PERPS 24H ───────────────────────────────────────
-    function renderOI(data) {
-      const all = data.protocols || data.allProtocols || [];
-      const top = all
-        .filter(p => (p.total24h || p.dailyVolume || 0) > 0)
-        .sort((a, b) => (b.total24h || b.dailyVolume || 0) - (a.total24h || a.dailyVolume || 0))
-        .slice(0, 5);
+    // ── BUYBACKS & REVENUS ──────────────────────────────────────
+    // Protocoles connus pour leurs programmes de rachat de tokens
+    const BUYBACK_LIST = [
+      "hyperliquid", "aave", "pump.fun", "sky", "gmx", "jupiter",
+      "pendle", "dydx", "uniswap", "lido", "pancakeswap", "raydium",
+      "compound", "curve", "balancer", "synthetix", "convex finance",
+      "rocket pool", "frax finance", "yearn finance",
+    ];
 
-      if (top.length === 0) {
-        document.getElementById("oiTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
+    const BUYBACK_LABELS = {
+      "hyperliquid":     "🔵 HYPE AF",
+      "pump.fun":        "🔥 Burn",
+      "sky":             "🔵 MKR burn",
+      "gmx":             "🟢 esGMX",
+      "jupiter":         "🟢 JUP burn",
+      "pendle":          "🟢 vePENDLE",
+      "aave":            "🔵 Safety Mod",
+      "dydx":            "🔵 Rachat",
+      "uniswap":         "🟡 Fee switch",
+      "pancakeswap":     "🔥 CAKE burn",
+      "raydium":         "🔥 RAY burn",
+    };
+
+    function renderBuybacks(feesData) {
+      const all = feesData.protocols || [];
+
+      // Match par nom partiel
+      const matched = all.filter(p => {
+        const name = (p.name || "").toLowerCase();
+        return BUYBACK_LIST.some(b => name.includes(b));
+      });
+
+      // Trier par revenus puis fees
+      const sorted = matched
+        .filter(p => (p.total24h || 0) > 0)
+        .sort((a, b) => {
+          const ra = a.holderRevenue24h ?? a.revenue24h ?? 0;
+          const rb = b.holderRevenue24h ?? b.revenue24h ?? 0;
+          if (rb !== ra) return rb - ra;
+          return (b.total24h || 0) - (a.total24h || 0);
+        })
+        .slice(0, 8);
+
+      if (sorted.length === 0) {
+        document.getElementById("buybackTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
         return;
       }
 
-      const rows = top.map((p, i) => {
-        const vol = p.total24h || p.dailyVolume || 0;
+      const rows = sorted.map((p, i) => {
+        const label = BUYBACK_LABELS[Object.keys(BUYBACK_LABELS).find(k => p.name.toLowerCase().includes(k)) || ""] || "";
+        const rev = p.holderRevenue24h ?? p.revenue24h ?? null;
+        const revDisplay = rev != null && rev > 0
+          ? `<span class="change-up">${fmtTVL(rev)}</span>`
+          : `<span style="color:#484f58">—</span>`;
         return `<tr>
-          <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span></td>
-          <td class="tvl-val">${fmtTVL(vol)}</td>
+          <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span>
+            ${label ? `<span style="color:#484f58;font-size:0.65rem;margin-left:4px">${label}</span>` : ""}
+          </td>
+          <td class="tvl-val">${fmtTVL(p.total24h)}</td>
+          <td>${revDisplay}</td>
           <td>${fmtChange(p.change_7d)}</td>
         </tr>`;
       }).join("");
 
-      document.getElementById("oiTable").innerHTML = `
+      document.getElementById("buybackTable").innerHTML = `
         <table class="data-table">
-          <thead><tr><th>Protocol</th><th>Vol 24h</th><th>7j</th></tr></thead>
+          <thead><tr><th>Protocol</th><th>Fees 24h</th><th>Rev holders</th><th>7j</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
