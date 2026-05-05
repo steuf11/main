@@ -199,15 +199,15 @@
   </div>
 
   <div class="grid-2">
-    <!-- ── DEX VOLUMES ── -->
+    <!-- ── OPEN INTEREST TOP 5 ── -->
     <div>
-      <h2>DEX VOLUMES 24H</h2>
+      <h2>OPEN INTEREST — TOP 5</h2>
       <div class="card">
-        <div id="dexTable"><p class="loading">Chargement...</p></div>
+        <div id="oiAggTable"><p class="loading">Chargement...</p></div>
       </div>
     </div>
 
-    <!-- ── OPEN INTEREST ── -->
+    <!-- ── VOLUMES PERPS ── -->
     <div>
       <h2>VOLUMES PERPS 24H</h2>
       <div class="card">
@@ -341,13 +341,12 @@
         fetchLlama(`${LLAMA}/v2/chains`),
         fetchLlama(`${LLAMA}/protocols`),
         fetchLlama(`${LLAMA}/overview/fees?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
-        fetchLlama(`${LLAMA}/overview/dexs?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
         fetchLlama(`${STABLES}/stablecoinchains`),
         fetchLlama(`${YIELDS_API}/pools`),
         fetchLlama(`${LLAMA}/overview/derivatives?excludeTotalDataChart=true&excludeTotalDataChartBreakdown=true`),
       ]);
 
-      const [chains, protocols, fees, dexs, stables, yields, perps] = results;
+      const [chains, protocols, fees, stables, yields, perps] = results;
 
       if (chains.status === "fulfilled")    renderChains(chains.value);
       else { document.getElementById("chainsTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
@@ -357,9 +356,6 @@
 
       if (fees.status === "fulfilled")      renderFees(fees.value);
       else { document.getElementById("feesTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
-
-      if (dexs.status === "fulfilled")      renderDexs(dexs.value);
-      else { document.getElementById("dexTable").innerHTML = '<p class="unavailable">Data unavailable</p>'; }
 
       if (stables.status === "fulfilled")   renderStables(stables.value);
       else { document.getElementById("stablesChart").parentElement.innerHTML = '<p class="unavailable">Data unavailable</p>'; }
@@ -380,7 +376,7 @@
       renderNarrativeSignal(defiData);
 
       const ok = results.filter(r => r.status === "fulfilled").length;
-      document.getElementById("defiStatus").textContent = `DeFiLlama: ${ok}/7 ✓`;
+      document.getElementById("defiStatus").textContent = `DeFiLlama: ${ok}/6 ✓`;
       updateTimestamp();
     }
 
@@ -467,28 +463,60 @@
         </table>`;
     }
 
-    // ── DEX VOLUMES ─────────────────────────────────────────────
-    function renderDexs(data) {
-      const top = (data.protocols || [])
-        .filter(p => p.total24h > 0)
-        .sort((a, b) => b.total24h - a.total24h)
+    // ── OPEN INTEREST TOP 5 (CoinGecko derivatives) ────────────
+    const OI_STABLES = new Set([
+      "USDT","USDC","DAI","BUSD","TUSD","USDP","USDD","FDUSD","PYUSD",
+      "EURC","FRAX","LUSD","GUSD","MIM","ALUSD","USDB","SUSD","CUSD","EURS"
+    ]);
+
+    async function loadOI() {
+      try {
+        const data = await retry(() =>
+          fetch("https://api.coingecko.com/api/v3/derivatives")
+            .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+        );
+        renderOIAgg(data);
+      } catch (e) {
+        console.error("OI fetch failed:", e);
+        document.getElementById("oiAggTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
+      }
+    }
+
+    function renderOIAgg(data) {
+      const map = {};
+      for (const d of data) {
+        const coin = (d.index_id || d.symbol || "").split(/[-/]/)[0].replace(/PERP$/, "").trim().toUpperCase();
+        if (!coin || OI_STABLES.has(coin)) continue;
+        const oi = Number(d.open_interest) || 0;
+        if (oi === 0) continue;
+        if (!map[coin]) map[coin] = { coin, totalOI: 0, markets: 0, changes: [] };
+        map[coin].totalOI += oi;
+        map[coin].markets++;
+        if (d.price_percentage_change_24h != null) map[coin].changes.push(Number(d.price_percentage_change_24h));
+      }
+
+      const top = Object.values(map)
+        .sort((a, b) => b.totalOI - a.totalOI)
         .slice(0, 5);
 
       if (top.length === 0) {
-        document.getElementById("dexTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
+        document.getElementById("oiAggTable").innerHTML = '<p class="unavailable">Data unavailable</p>';
         return;
       }
 
-      const rows = top.map((p, i) => `
-        <tr>
-          <td><span class="rank">${i + 1}</span><span class="protocol-name">${p.name}</span></td>
-          <td class="tvl-val">${fmtTVL(p.total24h)}</td>
-          <td>${fmtChange(p.change_7d)}</td>
-        </tr>`).join("");
+      const rows = top.map((c, i) => {
+        const avgChg = c.changes.length ? c.changes.reduce((s, v) => s + v, 0) / c.changes.length : null;
+        return `<tr>
+          <td><span class="rank">${i + 1}</span><span class="chain-name">${c.coin}</span></td>
+          <td class="tvl-val">${fmtTVL(c.totalOI)}</td>
+          <td>${fmtChange(avgChg)}</td>
+          <td style="color:#484f58;font-size:0.7rem">${c.markets} marchés</td>
+        </tr>`;
+      }).join("");
 
-      document.getElementById("dexTable").innerHTML = `
+      document.getElementById("oiAggTable").innerHTML = `
         <table class="data-table">
-          <thead><tr><th>DEX</th><th>Vol 24h</th><th>7j</th></tr></thead>
+          <thead><tr><th>Actif</th><th>OI Total</th><th>24h</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
@@ -847,9 +875,11 @@
     connectSSE();
     loadPrices();
     loadDefiLlama();
+    loadOI();
     loadETF();
     setInterval(loadPrices,    5 * 60 * 1000);
     setInterval(loadDefiLlama, 5 * 60 * 1000);
+    setInterval(loadOI,        5 * 60 * 1000);
     setInterval(loadETF,      15 * 60 * 1000);
   </script>
 </body>
