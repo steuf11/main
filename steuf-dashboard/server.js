@@ -197,6 +197,76 @@ app.get("/api/etf", async (_req, res) => {
   res.json(data);
 });
 
+// ─── Grok Narratives (xAI) ───────────────────────────────────────────────────
+
+const narrativesCache = { data: null, fetchedAt: 0 };
+const NARRATIVES_TTL = 30 * 60 * 1000; // 30 min
+
+app.get("/api/narratives", async (_req, res) => {
+  if (narrativesCache.data && Date.now() - narrativesCache.fetchedAt < NARRATIVES_TTL) {
+    return res.json(narrativesCache.data);
+  }
+
+  const apiKey = process.env.GROK_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: "GROK_API_KEY not configured" });
+
+  try {
+    const response = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "grok-3",
+        messages: [{
+          role: "system",
+          content: "Tu es un analyste crypto spécialisé dans les marchés asiatiques. Tu surveilles Weibo, WeChat et les forums crypto chinois. Tu réponds UNIQUEMENT en JSON valide, sans texte autour.",
+        }, {
+          role: "user",
+          content: `Identifie les 8 principales narratives/tendances crypto qui buzzent en ce moment sur les réseaux sociaux chinois et asiatiques.
+Pour chaque narrative, donne ce JSON :
+[
+  {
+    "token": "SYMBOLE_OU_NOM",
+    "category": "Catégorie (DeFi/L1/Meme/RWA/AI/Gaming/...)",
+    "sentiment": "bullish" | "bearish" | "neutral",
+    "resume": "Résumé court en français (max 90 caractères)",
+    "change_24h": estimation_variation_en_pct
+  }
+]
+Retourne UNIQUEMENT le tableau JSON.`,
+        }],
+        temperature: 0.4,
+        max_tokens: 1200,
+      }),
+      timeout: 30000,
+    });
+
+    if (!response.ok) {
+      const txt = await response.text();
+      throw new Error(`xAI HTTP ${response.status}: ${txt.slice(0, 100)}`);
+    }
+
+    const data = await response.json();
+    const content = (data.choices?.[0]?.message?.content || "").trim();
+
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error("Réponse Grok sans JSON valide");
+
+    const narratives = JSON.parse(jsonMatch[0]);
+    const result = { narratives, updatedAt: new Date().toISOString() };
+
+    narrativesCache.data = result;
+    narrativesCache.fetchedAt = Date.now();
+    console.log(`[Grok] ${narratives.length} narratives chargées`);
+    res.json(result);
+  } catch (err) {
+    console.error("[Grok] Erreur:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 app.listen(PORT, "0.0.0.0", () => {

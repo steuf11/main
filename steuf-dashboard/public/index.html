@@ -389,12 +389,13 @@
 
     // ── AUTO-FILL intel sections from DeFiLlama (si pas de webhook) ──────────
     let intelFromSSE = false;
+    let narrativesFromGrok = false;
 
     function autoFillIntelSections({ chains, protocols, fees, stables, yields }) {
       if (intelFromSSE) return; // données webhook prioritaires
 
-      // ── TOP NARRATIVES : protocoles avec fort inflow 7j ──
-      if (protocols) {
+      // ── TOP NARRATIVES : protocoles avec fort inflow 7j (fallback si Grok indispo) ──
+      if (!narrativesFromGrok && protocols) {
         const narratives = protocols
           .filter(p => p.change_7d > 15 && p.tvl > 1_000_000)
           .sort((a, b) => b.change_7d - a.change_7d)
@@ -913,13 +914,26 @@
       }).join("");
     }
 
+    function sentimentIcon(s) {
+      if (s === "bullish")  return "<span style='color:#3fb950'>▲</span>";
+      if (s === "bearish")  return "<span style='color:#f85149'>▼</span>";
+      return "<span style='color:#d29922'>◆</span>";
+    }
+
     function renderNarratives(narratives) {
       const list = document.getElementById("narrativesList");
       if (!narratives || narratives.length === 0) { list.innerHTML = '<p class="empty">Aucune narrative</p>'; return; }
       list.innerHTML = narratives.map(n => `
-        <div class="narrative-row">
-          <span><span class="narrative-token">${n.token}</span> <span class="narrative-cat">${n.category || ""}</span></span>
-          <span>${fmtChange(n.change_24h)}</span>
+        <div class="narrative-row" style="flex-direction:column;align-items:flex-start;padding:6px 0">
+          <div style="display:flex;justify-content:space-between;width:100%">
+            <span>
+              ${sentimentIcon(n.sentiment)}
+              <span class="narrative-token" style="margin-left:4px">${n.token}</span>
+              <span class="narrative-cat" style="margin-left:6px">${n.category || ""}</span>
+            </span>
+            <span>${fmtChange(n.change_24h)}</span>
+          </div>
+          ${n.resume ? `<div style="color:#8b949e;font-size:0.75rem;margin-top:2px">${n.resume}</div>` : ""}
         </div>`).join("");
     }
 
@@ -985,6 +999,19 @@
       };
     }
 
+    // ─── Grok Narratives ────────────────────────────────────────
+    async function loadNarratives() {
+      try {
+        const data = await fetch("/api/narratives").then(r => r.json());
+        if (data.narratives?.length > 0) {
+          narrativesFromGrok = true;
+          renderNarratives(data.narratives);
+        }
+      } catch (e) {
+        console.error("[Narratives] Grok failed:", e);
+      }
+    }
+
     // ─── Auto-refresh DeFiLlama every 5 min ────────────────────
     function manualRefresh() {
       loadPrices();
@@ -1001,10 +1028,12 @@
     loadDefiLlama();
     loadOI();
     loadETF();
-    setInterval(loadPrices,    5 * 60 * 1000);
-    setInterval(loadDefiLlama, 5 * 60 * 1000);
-    setInterval(loadOI,        5 * 60 * 1000);
-    setInterval(loadETF,      15 * 60 * 1000);
+    loadNarratives();
+    setInterval(loadPrices,      5 * 60 * 1000);
+    setInterval(loadDefiLlama,   5 * 60 * 1000);
+    setInterval(loadOI,          5 * 60 * 1000);
+    setInterval(loadETF,        15 * 60 * 1000);
+    setInterval(loadNarratives, 30 * 60 * 1000);
   </script>
 </body>
 </html>
